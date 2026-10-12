@@ -7,7 +7,7 @@ import { getSupabase } from '@/lib/supabase';
 import { AVAILABLE_MODELS } from '@/lib/models';
 
 const BOT_COLUMNS =
-  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, created_at';
+  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, created_at';
 
 const DEFAULT_SYSTEM_PROMPT =
   'Ты — ассистент поддержки. Отвечай на вопросы пользователя, опираясь только на предоставленный контекст, и ссылайся на источники.';

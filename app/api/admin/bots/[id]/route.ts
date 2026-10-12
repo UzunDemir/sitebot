@@ -1,5 +1,6 @@
 /**
- * Admin bots API: update a single bot's settings.
+ * Admin bots API: update a single bot's settings
+ * (including widget theme and the origin allowlist for embedding).
  */
 
 import { adminGuard } from '@/lib/admin-auth';
@@ -9,7 +10,18 @@ import { AVAILABLE_MODELS } from '@/lib/models';
 const MODEL_IDS = new Set(AVAILABLE_MODELS.map((m) => m.id));
 
 const BOT_COLUMNS =
-  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, created_at';
+  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, created_at';
+
+function normalizeOrigin(value: string): string | null {
+  let candidate = value.trim();
+  if (!candidate) return null;
+  if (!/^https?:\/\//i.test(candidate)) candidate = 'https://' + candidate;
+  try {
+    return new URL(candidate).origin;
+  } catch {
+    return null;
+  }
+}
 
 export async function PATCH(
   req: Request,
@@ -42,6 +54,24 @@ export async function PATCH(
   }
   if (typeof body.thinking_enabled === 'boolean') patch.thinking_enabled = body.thinking_enabled;
   if (typeof body.is_active === 'boolean') patch.is_active = body.is_active;
+
+  if (typeof body.theme === 'object' && body.theme !== null) {
+    const raw = body.theme as { accent?: unknown };
+    const accent = typeof raw.accent === 'string' ? raw.accent.trim() : '';
+    if (accent && !/^#[0-9a-fA-F]{6}$/.test(accent)) {
+      return Response.json({ error: 'bad_accent' }, { status: 400 });
+    }
+    patch.theme = accent ? { accent } : {};
+  }
+
+  if (typeof body.allowed_origins === 'string') {
+    const origins = body.allowed_origins
+      .split(/[\n,]+/)
+      .map((part) => normalizeOrigin(part))
+      .filter((origin): origin is string => Boolean(origin))
+      .slice(0, 20);
+    patch.allowed_origins = origins;
+  }
 
   if (Object.keys(patch).length === 0) {
     return Response.json({ error: 'nothing_to_update' }, { status: 400 });
