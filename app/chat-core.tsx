@@ -46,6 +46,43 @@ function feedbackFromParts(parts: unknown[]): FeedbackInfo | null {
   return part?.data ?? null;
 }
 
+type Palette = {
+  accent: string;
+  pageBg: string;
+  headerBg: string;
+  headerText: string;
+  headerSubtle: string;
+  botBubbleBg: string;
+  botBubbleText: string;
+  userBubbleBg: string;
+  userBubbleText: string;
+  border: string;
+  subtleText: string;
+  inputBg: string;
+  radius: number;
+};
+
+function paletteOf(t: WidgetTheme): Palette {
+  const dark = t.dark === true;
+  const c = t.colors ?? {};
+  const accent = t.accent || DEFAULT_ACCENT;
+  return {
+    accent,
+    pageBg: c.pageBg || (dark ? '#0f172a' : '#ffffff'),
+    headerBg: c.headerBg || (dark ? '#1e293b' : '#ffffff'),
+    headerText: c.headerText || (dark ? '#f1f5f9' : '#0f172a'),
+    headerSubtle: dark ? '#94a3b8' : '#64748b',
+    botBubbleBg: c.botBubbleBg || (dark ? '#1e293b' : '#f1f5f9'),
+    botBubbleText: c.botBubbleText || (dark ? '#e2e8f0' : '#1e293b'),
+    userBubbleBg: c.userBubbleBg || accent,
+    userBubbleText: c.userBubbleText || '#ffffff',
+    border: dark ? '#334155' : '#e2e8f0',
+    subtleText: dark ? '#64748b' : '#94a3b8',
+    inputBg: c.inputBg || (dark ? '#0f172a' : '#ffffff'),
+    radius: Math.min(28, Math.max(0, t.radius ?? 16)),
+  };
+}
+
 export function Chat({
   bot,
   theme,
@@ -56,7 +93,7 @@ export function Chat({
   compact?: boolean;
 }) {
   const t: WidgetTheme = { ...(bot.theme ?? {}), ...(theme ?? {}) };
-  const accent = t.accent || DEFAULT_ACCENT;
+  const p = paletteOf(t);
   const title = t.title || bot.name;
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
@@ -121,28 +158,43 @@ export function Chat({
     setInput('');
   }
 
+  const bubbleRadius = p.radius;
+
   return (
     <div
-      className={`flex flex-col overflow-hidden bg-white ${
-        compact ? 'h-full' : 'h-[85vh] rounded-2xl border border-slate-200 shadow-sm'
-      }`}
-      style={t.fontFamily ? { fontFamily: t.fontFamily } : undefined}
+      className={`flex flex-col overflow-hidden ${compact ? 'h-full' : 'h-[85vh]'}`}
+      style={{
+        backgroundColor: p.pageBg,
+        borderRadius: compact ? 0 : bubbleRadius,
+        border: compact ? 'none' : `1px solid ${p.border}`,
+        boxShadow: compact ? 'none' : '0 1px 2px rgba(15, 23, 42, 0.06)',
+        ...(t.fontFamily ? { fontFamily: t.fontFamily } : {}),
+      }}
     >
-      <header className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
+      <header
+        className="flex items-center gap-3 border-b px-5 py-4"
+        style={{ backgroundColor: p.headerBg, borderColor: p.border }}
+      >
         {t.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={t.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
         ) : (
           <div
             className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-white"
-            style={{ backgroundColor: accent }}
+            style={{ backgroundColor: p.accent }}
           >
             💬
           </div>
         )}
         <div>
-          <h1 className="text-sm font-semibold text-slate-900">{title}</h1>
-          {!compact && <p className="text-xs text-slate-500">{subtitle}</p>}
+          <h1 className="text-sm font-semibold" style={{ color: p.headerText }}>
+            {title}
+          </h1>
+          {!compact && (
+            <p className="text-xs" style={{ color: p.headerSubtle }}>
+              {subtitle}
+            </p>
+          )}
         </div>
         <span
           className={`ml-auto inline-flex h-2.5 w-2.5 rounded-full ${busy ? 'bg-amber-400' : 'bg-emerald-500'}`}
@@ -152,7 +204,15 @@ export function Chat({
 
       <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
         <div className="flex justify-start">
-          <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-slate-100 px-4 py-3 text-sm whitespace-pre-wrap text-slate-800">
+          <div
+            className="max-w-[85%] px-4 py-3 text-sm whitespace-pre-wrap"
+            style={{
+              backgroundColor: p.botBubbleBg,
+              color: p.botBubbleText,
+              borderRadius: bubbleRadius,
+              borderBottomLeftRadius: 6,
+            }}
+          >
             {bot.greeting ?? 'Здравствуйте! Чем могу помочь?'}
           </div>
         </div>
@@ -166,8 +226,13 @@ export function Chat({
             return (
               <div key={message.id} className="flex justify-end">
                 <div
-                  className="max-w-[85%] rounded-2xl rounded-br-md px-4 py-3 text-sm whitespace-pre-wrap text-white"
-                  style={{ backgroundColor: accent }}
+                  className="max-w-[85%] px-4 py-3 text-sm whitespace-pre-wrap"
+                  style={{
+                    backgroundColor: p.userBubbleBg,
+                    color: p.userBubbleText,
+                    borderRadius: bubbleRadius,
+                    borderBottomRightRadius: 6,
+                  }}
                 >
                   {text}
                 </div>
@@ -178,7 +243,15 @@ export function Chat({
           return (
             <div key={message.id} className="flex justify-start">
               <div className="max-w-[85%] space-y-2">
-                <div className="rounded-2xl rounded-bl-md bg-slate-100 px-4 py-3 text-sm whitespace-pre-wrap text-slate-800">
+                <div
+                  className="px-4 py-3 text-sm whitespace-pre-wrap"
+                  style={{
+                    backgroundColor: p.botBubbleBg,
+                    color: p.botBubbleText,
+                    borderRadius: bubbleRadius,
+                    borderBottomLeftRadius: 6,
+                  }}
+                >
                   {text || (status === 'streaming' ? '…' : '')}
                 </div>
                 {sources.length > 0 && (
@@ -186,7 +259,13 @@ export function Chat({
                     {sources.map((s) => (
                       <span
                         key={s.n}
-                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-500"
+                        className="inline-flex items-center gap-1 border px-2.5 py-1 text-[11px]"
+                        style={{
+                          borderColor: p.border,
+                          color: p.headerSubtle,
+                          backgroundColor: p.headerBg,
+                          borderRadius: 999,
+                        }}
                         title={s.source ?? undefined}
                       >
                         [{s.n}] {s.title ?? 'источник'}
@@ -202,32 +281,53 @@ export function Chat({
 
         {status === 'submitted' && (
           <div className="flex justify-start">
-            <div className="rounded-2xl rounded-bl-md bg-slate-100 px-4 py-3 text-sm text-slate-400">
+            <div
+              className="px-4 py-3 text-sm"
+              style={{
+                backgroundColor: p.botBubbleBg,
+                color: p.subtleText,
+                borderRadius: bubbleRadius,
+                borderBottomLeftRadius: 6,
+              }}
+            >
               Ищу в базе знаний…
             </div>
           </div>
         )}
 
         {errorText && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div
+            className="border px-4 py-3 text-sm"
+            style={{ borderColor: '#fecaca', backgroundColor: '#fef2f2', color: '#b91c1c', borderRadius: bubbleRadius }}
+          >
             {errorText}
           </div>
         )}
       </div>
 
-      <form onSubmit={submit} className="flex gap-2 border-t border-slate-200 px-4 py-3">
+      <form
+        onSubmit={submit}
+        className="flex gap-2 border-t px-4 py-3"
+        style={{ borderColor: p.border, backgroundColor: p.headerBg }}
+      >
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Спросите что-нибудь…"
-          className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-indigo-500"
+          className="flex-1 px-4 py-2.5 text-sm outline-none"
+          style={{
+            backgroundColor: p.inputBg,
+            border: `1px solid ${p.border}`,
+            borderRadius: bubbleRadius,
+            color: p.headerText,
+          }}
           maxLength={1000}
         />
         <button
           type="submit"
           disabled={busy || !input.trim()}
-          className="rounded-xl px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-          style={{ backgroundColor: accent }}
+          className="px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          style={{ backgroundColor: p.accent, borderRadius: bubbleRadius }}
         >
           {busy ? '…' : 'Отправить'}
         </button>

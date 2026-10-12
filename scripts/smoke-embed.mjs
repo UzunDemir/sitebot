@@ -132,7 +132,18 @@ if (fbMatch) {
 try {
   const updTheme = await supabase
     .from('bots')
-    .update({ theme: { accent: '#123456', bubbleIcon: '🔔', title: 'Тест' } })
+    .update({
+      theme: {
+        accent: '#123456',
+        bubbleIcon: '🔔',
+        title: 'Тест',
+        position: 'left',
+        windowWidth: 420,
+        dark: true,
+        colors: { headerBg: '#101010' },
+        proactive: { enabled: true, delaySeconds: 5, text: 'Тизер' },
+      },
+    })
     .eq('id', bot.id);
   if (updTheme.error) throw updTheme.error;
   const themed = await fetch(`${BASE}/api/bot?key=${bot.public_key}`);
@@ -140,6 +151,9 @@ try {
   const t = themedJson?.bots?.[0]?.theme ?? {};
   check('theme.accent пробрасывается', t.accent === '#123456', JSON.stringify(t));
   check('theme.title пробрасывается', t.title === 'Тест');
+  check('theme.position пробрасывается', t.position === 'left');
+  check('theme.dark/colors пробрасываются', t.dark === true && t.colors?.headerBg === '#101010');
+  check('theme.proactive пробрасывается', t.proactive?.enabled === true && t.proactive?.delaySeconds === 5);
 } finally {
   await supabase.from('bots').update({ theme: originalTheme }).eq('id', bot.id);
   console.log('  ↷ theme восстановлена');

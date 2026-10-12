@@ -1,6 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { WidgetColors, WidgetTheme } from '@/lib/widget-theme';
+
+const THEME_COLOR_FIELDS: Array<{ key: keyof WidgetColors; label: string }> = [
+  { key: 'headerBg', label: 'Фон шапки' },
+  { key: 'headerText', label: 'Текст шапки' },
+  { key: 'botBubbleBg', label: 'Пузырь бота: фон' },
+  { key: 'botBubbleText', label: 'Пузырь бота: текст' },
+  { key: 'userBubbleBg', label: 'Пузырь клиента: фон' },
+  { key: 'userBubbleText', label: 'Пузырь клиента: текст' },
+  { key: 'pageBg', label: 'Фон чата' },
+  { key: 'inputBg', label: 'Поле ввода: фон' },
+];
 
 type Bot = {
   id: string;
@@ -13,16 +25,7 @@ type Bot = {
   top_k: number;
   thinking_enabled: boolean;
   is_active: boolean;
-  theme: {
-    accent?: string;
-    bubbleColor?: string;
-    bubbleIcon?: string;
-    avatarUrl?: string;
-    title?: string;
-    subtitle?: string;
-    fontFamily?: string;
-    fontUrl?: string;
-  } | null;
+  theme: WidgetTheme | null;
   allowed_origins: string[] | null;
   created_at: string;
 };
@@ -374,16 +377,36 @@ function BotSettings({
     top_k: bot.top_k,
     thinking_enabled: bot.thinking_enabled,
     is_active: bot.is_active,
-    theme_accent: bot.theme?.accent ?? '#4f46e5',
-    theme_bubble_color: bot.theme?.bubbleColor ?? '',
-    theme_bubble_icon: bot.theme?.bubbleIcon ?? '',
-    theme_avatar_url: bot.theme?.avatarUrl ?? '',
-    theme_title: bot.theme?.title ?? '',
-    theme_subtitle: bot.theme?.subtitle ?? '',
-    theme_font_family: bot.theme?.fontFamily ?? '',
-    theme_font_url: bot.theme?.fontUrl ?? '',
     allowed_origins: (bot.allowed_origins ?? []).join('\n'),
   });
+  const [theme, setTheme] = useState<WidgetTheme>(bot.theme ?? {});
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  function setThemeField<K extends keyof WidgetTheme>(key: K, value: WidgetTheme[K]) {
+    setTheme((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setThemeColor(key: keyof WidgetColors, value: string) {
+    setTheme((prev) => ({ ...prev, colors: { ...(prev.colors ?? {}), [key]: value } }));
+  }
+
+  async function readImageFile(file: File): Promise<string | null> {
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Нужен файл-картинка (png, jpg, svg).');
+      return null;
+    }
+    if (file.size > 100_000) {
+      setUploadError('Картинка больше 100 КБ — сожмите её или укажите ссылку.');
+      return null;
+    }
+    setUploadError(null);
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -403,16 +426,7 @@ function BotSettings({
         top_k: form.top_k,
         thinking_enabled: form.thinking_enabled,
         is_active: form.is_active,
-        theme: {
-          accent: form.theme_accent,
-          bubbleColor: form.theme_bubble_color,
-          bubbleIcon: form.theme_bubble_icon,
-          avatarUrl: form.theme_avatar_url,
-          title: form.theme_title,
-          subtitle: form.theme_subtitle,
-          fontFamily: form.theme_font_family,
-          fontUrl: form.theme_font_url,
-        },
+        theme,
         allowed_origins: form.allowed_origins,
       }),
     });
@@ -504,93 +518,256 @@ function BotSettings({
         </div>
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2">
-        <p className="text-xs font-semibold text-slate-600 sm:col-span-2">Виджет и внешний вид</p>
-        <label className="space-y-1 text-xs text-slate-500">
-          Акцент (кнопки и пузыри в чате)
-          <span className="flex items-center gap-2">
+      <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+        <p className="text-xs font-semibold text-slate-600">Виджет и внешний вид</p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-1 text-xs text-slate-500">
+            Позиция кнопки на сайте
+            <select
+              value={theme.position ?? 'right'}
+              onChange={(e) => setThemeField('position', e.target.value === 'left' ? 'left' : 'right')}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="right">Справа</option>
+              <option value="left">Слева</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Размер кнопки, px (48–80)
             <input
-              type="color"
-              value={form.theme_accent}
-              onChange={(e) => setForm({ ...form, theme_accent: e.target.value })}
-              className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+              type="number"
+              min={48}
+              max={80}
+              value={theme.launcherSize ?? 56}
+              onChange={(e) => setThemeField('launcherSize', Number(e.target.value) || 56)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
             />
-            <code className="text-[11px] text-slate-400">{form.theme_accent}</code>
-          </span>
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Цвет кнопки-пузыря на сайте (пусто = акцент)
-          <span className="flex items-center gap-2">
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Подпись рядом с кнопкой (необязательно)
             <input
-              type="color"
-              value={form.theme_bubble_color || '#4f46e5'}
-              onChange={(e) => setForm({ ...form, theme_bubble_color: e.target.value })}
-              className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+              value={theme.launcherLabel ?? ''}
+              onChange={(e) => setThemeField('launcherLabel', e.target.value)}
+              placeholder="Например: Чат с поддержкой"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
             />
-            {form.theme_bubble_color ? (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, theme_bubble_color: '' })}
-                className="text-[11px] text-slate-400 hover:text-slate-600"
-              >
-                сбросить
-              </button>
-            ) : null}
-          </span>
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Иконка пузыря (emoji или https-ссылка на картинку)
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Цвет кнопки-пузыря (пусто = акцент)
+            <span className="flex items-center gap-2">
+              <input
+                type="color"
+                value={theme.bubbleColor || '#4f46e5'}
+                onChange={(e) => setThemeField('bubbleColor', e.target.value)}
+                className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+              />
+              {theme.bubbleColor ? (
+                <button
+                  type="button"
+                  onClick={() => setThemeField('bubbleColor', undefined)}
+                  className="text-[11px] text-slate-400 hover:text-slate-600"
+                >
+                  сбросить
+                </button>
+              ) : null}
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Акцент чата (пузыри клиента, кнопки в окне)
+            <span className="flex items-center gap-2">
+              <input
+                type="color"
+                value={theme.accent || '#4f46e5'}
+                onChange={(e) => setThemeField('accent', e.target.value)}
+                className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+              />
+              {theme.accent ? (
+                <button
+                  type="button"
+                  onClick={() => setThemeField('accent', undefined)}
+                  className="text-[11px] text-slate-400 hover:text-slate-600"
+                >
+                  сбросить
+                </button>
+              ) : null}
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Иконка кнопки (emoji, ссылка или файл)
+            <span className="flex items-center gap-2">
+              <input value={theme.bubbleIcon ?? ''} onChange={(e) => setThemeField('bubbleIcon', e.target.value)} placeholder="🛎 или https://…/icon.png" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const input = e.currentTarget;
+                  const file = input.files?.[0];
+                  if (file) {
+                    const dataUrl = await readImageFile(file);
+                    if (dataUrl) setThemeField('bubbleIcon', dataUrl);
+                  }
+                  input.value = '';
+                }}
+                className="w-28 text-[10px] text-slate-500"
+              />
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Аватар в шапке чата (ссылка или файл)
+            <span className="flex items-center gap-2">
+              <input value={theme.avatarUrl ?? ''} onChange={(e) => setThemeField('avatarUrl', e.target.value)} placeholder="https://…/logo.png" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={async (e) => {
+                  const input = e.currentTarget;
+                  const file = input.files?.[0];
+                  if (file) {
+                    const dataUrl = await readImageFile(file);
+                    if (dataUrl) setThemeField('avatarUrl', dataUrl);
+                  }
+                  input.value = '';
+                }}
+                className="w-28 text-[10px] text-slate-500"
+              />
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Заголовок виджета (пусто = название бота)
+            <input value={theme.title ?? ''} onChange={(e) => setThemeField('title', e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Подзаголовок в шапке чата
+            <input value={theme.subtitle ?? ''} onChange={(e) => setThemeField('subtitle', e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+          </label>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="space-y-1 text-xs text-slate-500">
+            Ширина окна, px (320–560)
+            <input
+              type="number"
+              min={320}
+              max={560}
+              value={theme.windowWidth ?? 380}
+              onChange={(e) => setThemeField('windowWidth', Number(e.target.value) || 380)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Высота окна, px (400–820)
+            <input
+              type="number"
+              min={400}
+              max={820}
+              value={theme.windowHeight ?? 600}
+              onChange={(e) => setThemeField('windowHeight', Number(e.target.value) || 600)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Закругление, px (0–28)
+            <input
+              type="number"
+              min={0}
+              max={28}
+              value={theme.radius ?? 16}
+              onChange={(e) => setThemeField('radius', Number(e.target.value) || 0)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+        </div>
+
+        <label className="flex items-center gap-2 text-xs text-slate-600">
           <input
-            value={form.theme_bubble_icon}
-            onChange={(e) => setForm({ ...form, theme_bubble_icon: e.target.value })}
-            placeholder="💬 или https://…/icon.png"
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            type="checkbox"
+            checked={theme.dark === true}
+            onChange={(e) => setThemeField('dark', e.target.checked)}
+            className="h-4 w-4"
           />
+          Тёмная тема чата
         </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Аватар в шапке чата (https-ссылка)
-          <input
-            value={form.theme_avatar_url}
-            onChange={(e) => setForm({ ...form, theme_avatar_url: e.target.value })}
-            placeholder="https://…/logo.png"
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Заголовок виджета (пусто = название бота)
-          <input
-            value={form.theme_title}
-            onChange={(e) => setForm({ ...form, theme_title: e.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Подзаголовок в шапке чата
-          <input
-            value={form.theme_subtitle}
-            onChange={(e) => setForm({ ...form, theme_subtitle: e.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Шрифт (CSS font-family)
-          <input
-            value={form.theme_font_family}
-            onChange={(e) => setForm({ ...form, theme_font_family: e.target.value })}
-            placeholder="Inter, system-ui, sans-serif"
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-500">
-          Подключить веб-шрифт (https-ссылка на CSS, напр. Google Fonts)
-          <input
-            value={form.theme_font_url}
-            onChange={(e) => setForm({ ...form, theme_font_url: e.target.value })}
-            placeholder="https://fonts.googleapis.com/css2?family=Inter&display=swap"
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-        <label className="space-y-1 text-xs text-slate-500 sm:col-span-2">
+
+        <details className="rounded-xl border border-slate-200 bg-white p-3">
+          <summary className="cursor-pointer text-xs font-medium text-slate-500">
+            Тонкая настройка цветов (перекрывает тему и тёмный режим)
+          </summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {THEME_COLOR_FIELDS.map((field) => (
+              <label key={field.key} className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                {field.label}
+                <span className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={theme.colors?.[field.key] ?? '#ffffff'}
+                    onChange={(e) => setThemeColor(field.key, e.target.value)}
+                    className="h-8 w-12 cursor-pointer rounded border border-slate-300"
+                  />
+                  {theme.colors?.[field.key] ? (
+                    <button
+                      type="button"
+                      onClick={() => setThemeColor(field.key, '')}
+                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      сброс
+                    </button>
+                  ) : null}
+                </span>
+              </label>
+            ))}
+          </div>
+        </details>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-1 text-xs text-slate-500">
+            Шрифт (CSS font-family)
+            <input value={theme.fontFamily ?? ''} onChange={(e) => setThemeField('fontFamily', e.target.value)} placeholder="Inter, system-ui, sans-serif" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Веб-шрифт: ссылка на CSS (Google Fonts и т.п.)
+            <input value={theme.fontUrl ?? ''} onChange={(e) => setThemeField('fontUrl', e.target.value)} placeholder="https://fonts.googleapis.com/css2?family=Inter&display=swap" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500" />
+          </label>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={theme.proactive?.enabled === true}
+              onChange={(e) => setTheme({ ...theme, proactive: { ...(theme.proactive ?? {}), enabled: e.target.checked } })}
+              className="h-4 w-4"
+            />
+            Проактивное сообщение возле кнопки (привлекает посетителя)
+          </label>
+          {theme.proactive?.enabled === true && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <label className="space-y-1 text-xs text-slate-500">
+                Задержка, сек (3–60)
+                <input
+                  type="number"
+                  min={3}
+                  max={60}
+                  value={theme.proactive?.delaySeconds ?? 8}
+                  onChange={(e) => setTheme({ ...theme, proactive: { ...(theme.proactive ?? {}), enabled: true, delaySeconds: Number(e.target.value) || 8 } })}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-1 text-xs text-slate-500 sm:col-span-2">
+                Текст (до 160 символов)
+                <input
+                  value={theme.proactive?.text ?? ''}
+                  maxLength={160}
+                  onChange={(e) => setTheme({ ...theme, proactive: { ...(theme.proactive ?? {}), enabled: true, text: e.target.value } })}
+                  placeholder="Здравствуйте! Подскажу, как оформить заказ?"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+
+        <label className="block space-y-1 text-xs text-slate-500">
           Сайты для встраивания (origin; пусто — разрешено везде)
           <textarea
             rows={3}
@@ -600,6 +777,18 @@ function BotSettings({
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
           />
         </label>
+
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <a
+            href={`/embed/${bot.public_key}`}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50"
+          >
+            Открыть виджет и проверить оформление
+          </a>
+          {uploadError && <span className="text-red-600">{uploadError}</span>}
+        </div>
       </div>
 
       <label className="block space-y-1 text-xs text-slate-500">
