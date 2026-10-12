@@ -314,6 +314,7 @@ function BotBar({
         {bots.map((bot) => (
           <option key={bot.id} value={bot.id}>
             {bot.name}
+            {bot.is_active ? '' : ' — выключен'}
           </option>
         ))}
       </select>
