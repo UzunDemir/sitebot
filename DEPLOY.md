@@ -50,6 +50,10 @@ npx vercel deploy --prod
   детали — Vercel → Deployment → Logs (там же видны ошибки эмбеддингов).
 - Локально работает, прод — нет → почти всегда дело в env-переменных
   именно прод-окружения.
+- Посторонние видят 404 или просьбу войти в Vercel → включена Deployment
+  Protection: Settings → Deployment Protection → Vercel Authentication →
+  «Standard Protection» (прод публичный, превью защищены) или «Disabled».
+  Применяется сразу, Redeploy не нужен.
 
 ## Заметки
 
