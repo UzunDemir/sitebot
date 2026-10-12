@@ -127,9 +127,16 @@ try {
   // 2) bots list (auth check)
   const botsRes = await fetch(`${BASE}/api/admin/bots`, { headers: { cookie } });
   const botsJson = await botsRes.json().catch(() => null);
-  const botId = botsJson?.bots?.[0]?.id;
-  check('GET /api/admin/bots под cookie', botsRes.ok, `${botsJson?.bots?.length ?? 0} бот(ов)`);
-  if (!botId) throw new Error('в базе нет ни одного бота — сначала npm run seed');
+  const activeBot =
+    (botsJson?.bots ?? []).find((b) => b.is_active) ?? (botsJson?.bots ?? [])[0] ?? null;
+  const botId = activeBot?.id;
+  const botKey = activeBot?.public_key;
+  check(
+    'GET /api/admin/bots под cookie',
+    botsRes.ok,
+    `${botsJson?.bots?.length ?? 0} бот(ов), активен: ${activeBot?.name ?? '—'}`,
+  );
+  if (!botId || !botKey) throw new Error('в базе нет ни одного бота — сначала npm run seed');
 
   // 3) upload a fresh document
   const form = new FormData();
@@ -176,6 +183,7 @@ try {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
+      botKey,
       sessionKey: `smoke-admin-${Date.now()}`,
       messages: [
         { id: 'smoke-a1', role: 'user', parts: [{ type: 'text', text: QUESTION }] },
