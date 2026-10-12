@@ -10,7 +10,8 @@
     "seed": "tsx scripts/seed.ts",
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "smoke:admin": "node scripts/smoke-admin.mjs",
-    "smoke:embed": "node scripts/smoke-embed.mjs"
+    "smoke:embed": "node scripts/smoke-embed.mjs",
+    "eval": "node scripts/eval-run.mjs"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.63",

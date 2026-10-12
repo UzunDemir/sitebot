@@ -1,0 +1,26 @@
+name: Prod eval (golden set)
+
+on:
+  workflow_dispatch:
+    inputs:
+      set:
+        description: "Путь к набору в evals/"
+        required: false
+        default: evals/demo-shop.json
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Run evals against production
+        env:
+          EVAL_BASE_URL: ${{ vars.EVAL_BASE_URL || 'https://sitebot-nu.vercel.app' }}
+        run: node scripts/eval-run.mjs "${{ inputs.set }}"
