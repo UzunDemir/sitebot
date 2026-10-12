@@ -8,6 +8,7 @@ type LoadError = 'not_seeded' | 'not_configured' | 'network' | 'origin_not_allow
 export default function ChatLoader() {
   const [bots, setBots] = useState<ChatBotInfo[] | null>(null);
   const [selectedKey, setSelectedKey] = useState('');
+  const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState<LoadError | null>(null);
 
   useEffect(() => {
@@ -40,6 +41,8 @@ export default function ChatLoader() {
   if (loadError) return <SetupCard variant={loadError} />;
   if (!bots || bots.length === 0) return <LoadingCard />;
   const selected = bots.find((b) => b.publicKey === selectedKey) ?? bots[0];
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const embedSnippet = `<script src="${origin}/loader.js" data-bot="${selected.publicKey}" async></script>`;
 
   return (
     <div>
@@ -61,6 +64,46 @@ export default function ChatLoader() {
         </div>
       )}
       <Chat key={selected.publicKey} bot={selected} />
+
+      <details className="mt-4 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <summary className="cursor-pointer px-5 py-3 text-xs font-medium text-slate-500">
+          Встроить этого бота на свой сайт
+        </summary>
+        <div className="border-t border-slate-100 px-5 py-4">
+          <p className="text-xs text-slate-500">
+            Одна строка — и на сайте появится кнопка чата с этим ботом:
+          </p>
+          <pre className="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 text-[11px] leading-relaxed text-slate-100">
+            {embedSnippet}
+          </pre>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(embedSnippet).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+            >
+              Скопировать код
+            </button>
+            <a
+              href={`/embed/${selected.publicKey}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              Открыть как виджет
+            </a>
+            {copied && <span className="text-xs text-emerald-600">скопировано</span>}
+          </div>
+          <p className="mt-3 text-[11px] text-slate-400">
+            Цвет виджета и список разрешённых сайтов — в админке, в карточке бота.
+          </p>
+        </div>
+      </details>
     </div>
   );
 }

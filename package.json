@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
-    "smoke:admin": "node scripts/smoke-admin.mjs"
+    "smoke:admin": "node scripts/smoke-admin.mjs",
+    "smoke:embed": "node scripts/smoke-embed.mjs"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.63",

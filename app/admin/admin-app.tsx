@@ -13,6 +13,8 @@ type Bot = {
   top_k: number;
   thinking_enabled: boolean;
   is_active: boolean;
+  theme: { accent?: string } | null;
+  allowed_origins: string[] | null;
   created_at: string;
 };
 
@@ -172,6 +174,7 @@ export default function AdminApp() {
 
       {selectedBot && (
         <>
+          <StatsPanel key={`stats-${selectedBot.id}`} botId={selectedBot.id} />
           <BotSettings
             key={selectedBot.id}
             bot={selectedBot}
@@ -362,6 +365,8 @@ function BotSettings({
     top_k: bot.top_k,
     thinking_enabled: bot.thinking_enabled,
     is_active: bot.is_active,
+    theme_accent: bot.theme?.accent ?? '#4f46e5',
+    allowed_origins: (bot.allowed_origins ?? []).join('\n'),
   });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -374,7 +379,17 @@ function BotSettings({
     const res = await api(`/api/admin/bots/${bot.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        name: form.name,
+        greeting: form.greeting,
+        system_prompt: form.system_prompt,
+        model_id: form.model_id,
+        top_k: form.top_k,
+        thinking_enabled: form.thinking_enabled,
+        is_active: form.is_active,
+        theme: { accent: form.theme_accent },
+        allowed_origins: form.allowed_origins,
+      }),
     });
     setBusy(false);
     if (res.ok && res.data?.bot) {
@@ -462,6 +477,31 @@ function BotSettings({
             Бот активен
           </label>
         </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="space-y-1 text-xs text-slate-500">
+          Цвет виджета и чата
+          <span className="flex items-center gap-2">
+            <input
+              type="color"
+              value={form.theme_accent}
+              onChange={(e) => setForm({ ...form, theme_accent: e.target.value })}
+              className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+            />
+            <code className="text-[11px] text-slate-400">{form.theme_accent}</code>
+          </span>
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Сайты для встраивания (origin; пусто — разрешено везде)
+          <textarea
+            rows={3}
+            value={form.allowed_origins}
+            onChange={(e) => setForm({ ...form, allowed_origins: e.target.value })}
+            placeholder={'https://my-site.ru\nhttps://shop.example.com'}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
       </div>
 
       <label className="block space-y-1 text-xs text-slate-500">
@@ -691,5 +731,80 @@ function StatusBadge({ status }: { status: Doc['status'] }) {
     <span className={`rounded-full border px-2.5 py-0.5 text-[11px] ${styles[status]}`}>
       {labels[status]}
     </span>
+  );
+}
+
+type BotStats = {
+  days: number;
+  conversations: number;
+  messages: number;
+  answers: number;
+  up: number;
+  down: number;
+  avgLatencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalCostUsd: number;
+};
+
+function StatsPanel({ botId }: { botId: string }) {
+  const [stats, setStats] = useState<BotStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await api(`/api/admin/stats?botId=${encodeURIComponent(botId)}&days=7`);
+    if (res.ok && res.data?.stats) {
+      setStats(res.data.stats as BotStats);
+    }
+    setLoading(false);
+  }, [botId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const items: Array<{ label: string; value: string }> = stats
+    ? [
+        { label: 'Диалогов (7 дней)', value: String(stats.conversations) },
+        { label: 'Ответов', value: String(stats.answers) },
+        { label: 'Оценки', value: `👍 ${stats.up} · 👎 ${stats.down}` },
+        {
+          label: 'Средний ответ',
+          value: stats.avgLatencyMs > 0 ? `${(stats.avgLatencyMs / 1000).toFixed(1)} с` : '—',
+        },
+        {
+          label: 'Токены',
+          value: (stats.inputTokens + stats.outputTokens).toLocaleString('ru-RU'),
+        },
+        { label: 'Стоимость (оценка)', value: `${stats.totalCostUsd.toFixed(4)}` },
+      ]
+    : [];
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-900">Статистика за 7 дней</h2>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="text-xs text-slate-400 hover:text-slate-600"
+        >
+          обновить
+        </button>
+      </div>
+      {loading && !stats ? (
+        <div className="mt-3 h-10 animate-pulse rounded-xl bg-slate-100" />
+      ) : (
+        <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {items.map((item) => (
+            <div key={item.label} className="rounded-xl bg-slate-50 px-3 py-2">
+              <dt className="text-[11px] text-slate-400">{item.label}</dt>
+              <dd className="text-sm font-semibold text-slate-800">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
   );
 }
