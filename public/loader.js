@@ -49,13 +49,14 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v6';
+  var LOADER_VERSION = 'v7';
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
   var TEASER_KEY = 'sitebot_teaser_' + botKey;
 
   var theme = {};
+  var sessionPos = null;
   var state = {
     opened: false,
     teaserDismissed: false,
@@ -176,7 +177,7 @@
 
 
   function currentPos() {
-    return clampPos(defaultPos());
+    return clampPos(sessionPos || defaultPos());
   }
 
   // ---------- launcher render
@@ -337,6 +338,11 @@
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onUp);
       launcher.style.cursor = 'grab';
+      var left = parseFloat(launcher.style.left);
+      var top = parseFloat(launcher.style.top);
+      if (isFinite(left) && isFinite(top)) {
+        sessionPos = { left: left, top: top };
+      }
       applyLauncher();
       if (teaser) {
         teaser.style.display = '';
