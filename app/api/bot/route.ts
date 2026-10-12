@@ -1,16 +1,21 @@
 /**
- * Public bot info for the chat page and the embed widget.
+ * Public bot info for the chat page, the embed widget and loader.js.
  *
  * Without ?key= — the list of active bots (main page switcher).
  * With ?key=    — that single bot + theme, subject to the optional
  *                 origin allowlist (checked against the Referer header;
  *                 a basic measure, not spoof-proof).
  *
+ * CORS is open (*): loader.js reads the theme from arbitrary host sites.
+ * The payload is public by design — the same data is rendered by /embed.
+ *
  * Runs strictly at request time — GET handlers must not be prerendered.
  */
 
 import { connection } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+
+const CORS_HEADERS: Record<string, string> = { 'Access-Control-Allow-Origin': '*' };
 
 type BotRow = {
   public_key: string;
@@ -28,6 +33,10 @@ function refererOrigin(req: Request): string | null {
   } catch {
     return null;
   }
+}
+
+function json(status: number, payload: unknown): Response {
+  return Response.json(payload, { status, headers: CORS_HEADERS });
 }
 
 /** Next.js uses NEXT_* digest errors to control prerendering — never swallow them. */
@@ -57,7 +66,7 @@ export async function GET(req: Request): Promise<Response> {
     if (error) throw error;
 
     if (!data || data.length === 0) {
-      return Response.json({ error: key ? 'not_found' : 'not_seeded' }, { status: 404 });
+      return json(404, { error: key ? 'not_found' : 'not_seeded' });
     }
 
     if (key) {
@@ -66,11 +75,11 @@ export async function GET(req: Request): Promise<Response> {
       const origin = refererOrigin(req);
       const selfOrigin = new URL(req.url).origin;
       if (allowed.length > 0 && origin && origin !== selfOrigin && !allowed.includes(origin)) {
-        return Response.json({ error: 'origin_not_allowed' }, { status: 403 });
+        return json(403, { error: 'origin_not_allowed' });
       }
     }
 
-    return Response.json({
+    return json(200, {
       bots: (data as BotRow[]).map((row) => ({
         publicKey: row.public_key,
         name: row.name,
@@ -81,6 +90,6 @@ export async function GET(req: Request): Promise<Response> {
   } catch (err) {
     if (isNextInternalError(err)) throw err;
     console.error('[bot] failed to load bots:', err);
-    return Response.json({ error: 'not_configured' }, { status: 500 });
+    return json(500, { error: 'not_configured' });
   }
 }

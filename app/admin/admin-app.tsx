@@ -13,7 +13,16 @@ type Bot = {
   top_k: number;
   thinking_enabled: boolean;
   is_active: boolean;
-  theme: { accent?: string } | null;
+  theme: {
+    accent?: string;
+    bubbleColor?: string;
+    bubbleIcon?: string;
+    avatarUrl?: string;
+    title?: string;
+    subtitle?: string;
+    fontFamily?: string;
+    fontUrl?: string;
+  } | null;
   allowed_origins: string[] | null;
   created_at: string;
 };
@@ -366,6 +375,13 @@ function BotSettings({
     thinking_enabled: bot.thinking_enabled,
     is_active: bot.is_active,
     theme_accent: bot.theme?.accent ?? '#4f46e5',
+    theme_bubble_color: bot.theme?.bubbleColor ?? '',
+    theme_bubble_icon: bot.theme?.bubbleIcon ?? '',
+    theme_avatar_url: bot.theme?.avatarUrl ?? '',
+    theme_title: bot.theme?.title ?? '',
+    theme_subtitle: bot.theme?.subtitle ?? '',
+    theme_font_family: bot.theme?.fontFamily ?? '',
+    theme_font_url: bot.theme?.fontUrl ?? '',
     allowed_origins: (bot.allowed_origins ?? []).join('\n'),
   });
   const [busy, setBusy] = useState(false);
@@ -387,7 +403,16 @@ function BotSettings({
         top_k: form.top_k,
         thinking_enabled: form.thinking_enabled,
         is_active: form.is_active,
-        theme: { accent: form.theme_accent },
+        theme: {
+          accent: form.theme_accent,
+          bubbleColor: form.theme_bubble_color,
+          bubbleIcon: form.theme_bubble_icon,
+          avatarUrl: form.theme_avatar_url,
+          title: form.theme_title,
+          subtitle: form.theme_subtitle,
+          fontFamily: form.theme_font_family,
+          fontUrl: form.theme_font_url,
+        },
         allowed_origins: form.allowed_origins,
       }),
     });
@@ -479,9 +504,10 @@ function BotSettings({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2">
+        <p className="text-xs font-semibold text-slate-600 sm:col-span-2">Виджет и внешний вид</p>
         <label className="space-y-1 text-xs text-slate-500">
-          Цвет виджета и чата
+          Акцент (кнопки и пузыри в чате)
           <span className="flex items-center gap-2">
             <input
               type="color"
@@ -493,6 +519,78 @@ function BotSettings({
           </span>
         </label>
         <label className="space-y-1 text-xs text-slate-500">
+          Цвет кнопки-пузыря на сайте (пусто = акцент)
+          <span className="flex items-center gap-2">
+            <input
+              type="color"
+              value={form.theme_bubble_color || '#4f46e5'}
+              onChange={(e) => setForm({ ...form, theme_bubble_color: e.target.value })}
+              className="h-9 w-14 cursor-pointer rounded-lg border border-slate-300"
+            />
+            {form.theme_bubble_color ? (
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, theme_bubble_color: '' })}
+                className="text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                сбросить
+              </button>
+            ) : null}
+          </span>
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Иконка пузыря (emoji или https-ссылка на картинку)
+          <input
+            value={form.theme_bubble_icon}
+            onChange={(e) => setForm({ ...form, theme_bubble_icon: e.target.value })}
+            placeholder="💬 или https://…/icon.png"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Аватар в шапке чата (https-ссылка)
+          <input
+            value={form.theme_avatar_url}
+            onChange={(e) => setForm({ ...form, theme_avatar_url: e.target.value })}
+            placeholder="https://…/logo.png"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Заголовок виджета (пусто = название бота)
+          <input
+            value={form.theme_title}
+            onChange={(e) => setForm({ ...form, theme_title: e.target.value })}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Подзаголовок в шапке чата
+          <input
+            value={form.theme_subtitle}
+            onChange={(e) => setForm({ ...form, theme_subtitle: e.target.value })}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Шрифт (CSS font-family)
+          <input
+            value={form.theme_font_family}
+            onChange={(e) => setForm({ ...form, theme_font_family: e.target.value })}
+            placeholder="Inter, system-ui, sans-serif"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          Подключить веб-шрифт (https-ссылка на CSS, напр. Google Fonts)
+          <input
+            value={form.theme_font_url}
+            onChange={(e) => setForm({ ...form, theme_font_url: e.target.value })}
+            placeholder="https://fonts.googleapis.com/css2?family=Inter&display=swap"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500 sm:col-span-2">
           Сайты для встраивания (origin; пусто — разрешено везде)
           <textarea
             rows={3}

@@ -34,7 +34,7 @@ const check = (label, ok, extra = '') => {
 
 const { data: bots, error: botsError } = await supabase
   .from('bots')
-  .select('id, name, public_key, allowed_origins')
+  .select('id, name, public_key, allowed_origins, theme')
   .eq('is_active', true)
   .order('created_at', { ascending: true })
   .limit(1);
@@ -43,6 +43,7 @@ if (botsError || !bots || bots.length === 0) {
   process.exit(1);
 }
 const bot = bots[0];
+const originalTheme = bot.theme ?? {};
 console.log(`Бот: «${bot.name}», allowed_origins=${JSON.stringify(bot.allowed_origins ?? [])}`);
 
 // 1) loader.js
@@ -125,6 +126,23 @@ if (fbMatch) {
   check('/api/feedback → 200', fb.ok, `HTTP ${fb.status}`);
   const cleanup = await supabase.from('feedback').delete().eq('message_id', messageId);
   check('тестовая оценка удалена', !cleanup.error);
+}
+
+// 5b) theme round-trip (widget customization surface)
+try {
+  const updTheme = await supabase
+    .from('bots')
+    .update({ theme: { accent: '#123456', bubbleIcon: '🔔', title: 'Тест' } })
+    .eq('id', bot.id);
+  if (updTheme.error) throw updTheme.error;
+  const themed = await fetch(`${BASE}/api/bot?key=${bot.public_key}`);
+  const themedJson = await themed.json().catch(() => null);
+  const t = themedJson?.bots?.[0]?.theme ?? {};
+  check('theme.accent пробрасывается', t.accent === '#123456', JSON.stringify(t));
+  check('theme.title пробрасывается', t.title === 'Тест');
+} finally {
+  await supabase.from('bots').update({ theme: originalTheme }).eq('id', bot.id);
+  console.log('  ↷ theme восстановлена');
 }
 
 // 6) quota counter for today

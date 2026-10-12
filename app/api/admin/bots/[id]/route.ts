@@ -1,11 +1,12 @@
 /**
  * Admin bots API: update a single bot's settings
- * (including widget theme and the origin allowlist for embedding).
+ * (model, prompt, widget theme, origin allowlist).
  */
 
 import { adminGuard } from '@/lib/admin-auth';
 import { getSupabase } from '@/lib/supabase';
 import { AVAILABLE_MODELS } from '@/lib/models';
+import { parseWidgetTheme } from '@/lib/widget-theme';
 
 const MODEL_IDS = new Set(AVAILABLE_MODELS.map((m) => m.id));
 
@@ -55,13 +56,9 @@ export async function PATCH(
   if (typeof body.thinking_enabled === 'boolean') patch.thinking_enabled = body.thinking_enabled;
   if (typeof body.is_active === 'boolean') patch.is_active = body.is_active;
 
+  // Widget theme: sanitized and normalized (colors, URLs, font whitelist).
   if (typeof body.theme === 'object' && body.theme !== null) {
-    const raw = body.theme as { accent?: unknown };
-    const accent = typeof raw.accent === 'string' ? raw.accent.trim() : '';
-    if (accent && !/^#[0-9a-fA-F]{6}$/.test(accent)) {
-      return Response.json({ error: 'bad_accent' }, { status: 400 });
-    }
-    patch.theme = accent ? { accent } : {};
+    patch.theme = parseWidgetTheme(body.theme);
   }
 
   if (typeof body.allowed_origins === 'string') {

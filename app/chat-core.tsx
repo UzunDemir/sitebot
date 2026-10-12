@@ -3,14 +3,13 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useEffect, useMemo, useRef, useState } from 'react';
-
-export type ChatTheme = { accent?: string };
+import type { WidgetTheme } from '@/lib/widget-theme';
 
 export type ChatBotInfo = {
   publicKey: string;
   name: string;
   greeting: string | null;
-  theme?: ChatTheme;
+  theme?: WidgetTheme;
 };
 
 export const DEFAULT_ACCENT = '#4f46e5';
@@ -53,13 +52,28 @@ export function Chat({
   compact = false,
 }: {
   bot: ChatBotInfo;
-  theme?: ChatTheme;
+  theme?: WidgetTheme;
   compact?: boolean;
 }) {
-  const accent = theme?.accent || bot.theme?.accent || DEFAULT_ACCENT;
+  const t: WidgetTheme = { ...(bot.theme ?? {}), ...(theme ?? {}) };
+  const accent = t.accent || DEFAULT_ACCENT;
+  const title = t.title || bot.name;
+  const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
   const [sessionKey, setSessionKey] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Optional web font for the widget (link is scoped to this document).
+  useEffect(() => {
+    if (!t.fontUrl) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = t.fontUrl;
+    document.head.appendChild(link);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, [t.fontUrl]);
 
   useEffect(() => {
     let key = window.localStorage.getItem('sitebot_session');
@@ -112,17 +126,23 @@ export function Chat({
       className={`flex flex-col overflow-hidden bg-white ${
         compact ? 'h-full' : 'h-[85vh] rounded-2xl border border-slate-200 shadow-sm'
       }`}
+      style={t.fontFamily ? { fontFamily: t.fontFamily } : undefined}
     >
       <header className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-white"
-          style={{ backgroundColor: accent }}
-        >
-          💬
-        </div>
+        {t.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={t.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
+        ) : (
+          <div
+            className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-white"
+            style={{ backgroundColor: accent }}
+          >
+            💬
+          </div>
+        )}
         <div>
-          <h1 className="text-sm font-semibold text-slate-900">{bot.name}</h1>
-          {!compact && <p className="text-xs text-slate-500">Отвечает по базе знаний, с источниками</p>}
+          <h1 className="text-sm font-semibold text-slate-900">{title}</h1>
+          {!compact && <p className="text-xs text-slate-500">{subtitle}</p>}
         </div>
         <span
           className={`ml-auto inline-flex h-2.5 w-2.5 rounded-full ${busy ? 'bg-amber-400' : 'bg-emerald-500'}`}
