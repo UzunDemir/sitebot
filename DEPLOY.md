@@ -60,5 +60,6 @@ npx vercel deploy --prod
 - `.env.local` не попадает ни в git, ни в загрузку Vercel (`.gitignore` + `.vercelignore`).
 - Изменение env-переменных применяется только после Redeploy.
 - Для виджета (фаза 3) рекомендую привязать свой домен: Settings → Domains.
-- Проверка после деплоя: `npm run smoke:e2e` бьёт по localhost; для прода
-  пришлите URL — прогоню e2e против него.
+- Проверка после деплоя: локально — `npm run smoke:e2e`; против прода —
+  отдельной строкой `set SMOKE_BASE_URL=https://<ваш-домен>`, затем
+  `npm run smoke:e2e`.
