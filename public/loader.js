@@ -32,6 +32,13 @@
     return;
   }
 
+  try {
+    window.__sitebotLoader = LOADER_VERSION;
+  } catch (e) {
+    // ignore
+  }
+  console.log('[sitebot] loader ' + LOADER_VERSION + ' · форма подтянется с API · bot ' + botKey);
+
   var apiOrigin = new URL(script.src).origin;
   var attrs = {
     color: script.getAttribute('data-color'),
@@ -42,10 +49,10 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
+  var LOADER_VERSION = 'v6';
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
-  var POS_KEY = 'sitebot_launchpos_' + botKey;
   var TEASER_KEY = 'sitebot_teaser_' + botKey;
 
   var theme = {};
@@ -167,20 +174,9 @@
     };
   }
 
-  function savedPos() {
-    try {
-      var raw = window.localStorage.getItem(POS_KEY);
-      if (!raw) return null;
-      var p = JSON.parse(raw);
-      if (typeof p.left === 'number' && typeof p.top === 'number') return p;
-    } catch (e) {
-      // ignore
-    }
-    return null;
-  }
 
   function currentPos() {
-    return clampPos(savedPos() || defaultPos());
+    return clampPos(defaultPos());
   }
 
   // ---------- launcher render
@@ -341,15 +337,6 @@
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onUp);
       launcher.style.cursor = 'grab';
-      var left = parseFloat(launcher.style.left);
-      var top = parseFloat(launcher.style.top);
-      if (isFinite(left) && isFinite(top)) {
-        try {
-          window.localStorage.setItem(POS_KEY, JSON.stringify({ left: left, top: top }));
-        } catch (e) {
-          // ignore
-        }
-      }
       applyLauncher();
       if (teaser) {
         teaser.style.display = '';
@@ -426,6 +413,11 @@
 
   function applyFrame() {
     if (!frameWrap) return;
+    if (frameClip) {
+      var clipRadius = isMobile() ? 0 : effRadius();
+      frameClip.style.clipPath = 'inset(0px round ' + clipRadius + 'px)';
+      frameClip.style.webkitClipPath = 'inset(0px round ' + clipRadius + 'px)';
+    }
     if (isMobile()) {
       frameWrap.style.position = 'fixed';
       frameWrap.style.left = '0';
@@ -486,6 +478,12 @@
         frameWrap.style.transition = 'opacity .22s ease, transform .26s cubic-bezier(.2,.8,.3,1.05)';
         frameWrap.style.opacity = '1';
         frameWrap.style.transform = 'scale(1) translateY(0)';
+        window.setTimeout(function () {
+          if (!state.opened) return;
+          frameWrap.style.transition = 'none';
+          frameWrap.style.transform = 'none';
+          frameWrap.style.opacity = '1';
+        }, 340);
       });
     });
   }

@@ -434,7 +434,10 @@ function BotSettings({
     setBusy(false);
     if (res.ok && res.data?.bot) {
       onSaved(res.data.bot as Bot);
-      setMessage({ kind: 'ok', text: 'Сохранено — применится к следующим ответам.' });
+      setMessage({
+        kind: 'ok',
+        text: 'Сохранено. Если меняли внешний вид — обновите страницу сайта с виджетом (Ctrl+F5).',
+      });
     } else {
       setMessage({ kind: 'err', text: errorText(res.data, 'Не удалось сохранить.') });
     }
