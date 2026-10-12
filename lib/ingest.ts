@@ -134,11 +134,15 @@ export async function ingestDocument(input: IngestInput): Promise<IngestOutcome>
 
     return { documentId, chunks: rows.length, status: 'ready' };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    console.error('[ingest] failed:', raw);
+    const message = /quota|rate limit|resource_exhausted|429|exceeded/i.test(raw)
+      ? 'Превышен лимит бесплатного тарифа Google на эмбеддинги. Текст документа сохранён — подождите минуту-две и нажмите «повторить», обработка продолжится.'
+      : raw;
     await supabase
       .from('documents')
       .update({ status: 'error', error: message, updated_at: new Date().toISOString() })
       .eq('id', documentId);
-    throw err;
+    throw new Error(message);
   }
 }

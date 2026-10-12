@@ -159,6 +159,18 @@ try {
     doc ? `chunks=${doc.chunk_count}` : 'не найден',
   );
 
+  // 4b) re-index endpoint: unchanged document -> skipped, no re-embedding
+  const reRes = await fetch(`${BASE}/api/admin/documents/${doc.id}`, {
+    method: 'POST',
+    headers: { cookie },
+  });
+  const reJson = await reRes.json().catch(() => null);
+  check(
+    'повторная индексация (без изменений → skipped)',
+    reRes.ok && reJson?.status === 'skipped',
+    reJson ? `status=${reJson.status}` : `HTTP ${reRes.status}`,
+  );
+
   // 5) chat answers from the fresh document
   const chatRes = await fetch(`${BASE}/api/chat`, {
     method: 'POST',

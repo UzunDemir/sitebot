@@ -607,6 +607,26 @@ function DocumentsPanel({
                 )}
               </div>
               <StatusBadge status={doc.status} />
+              {(doc.status === 'error' ||
+                (doc.status === 'processing' &&
+                  Date.now() - new Date(doc.updated_at).getTime() > 5 * 60 * 1000)) && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setMessage(null);
+                    const res = await api(`/api/admin/documents/${doc.id}`, { method: 'POST' });
+                    setMessage(
+                      res.ok
+                        ? { kind: 'ok', text: `«${doc.title}» — индекс пересобран.` }
+                        : { kind: 'err', text: errorText(res.data, 'Не удалось переиндексировать.') },
+                    );
+                    onChanged();
+                  }}
+                  className="rounded-lg border border-amber-200 px-2.5 py-1 text-[11px] text-amber-700 hover:bg-amber-50"
+                >
+                  повторить
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void remove(doc)}
