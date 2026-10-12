@@ -62,6 +62,7 @@
   launcher.setAttribute('aria-label', attrs.label);
 
   var frameWrap = null;
+  var frameClip = null;
   var frame = null;
   var teaser = null;
   var labelEl = null;
@@ -391,16 +392,33 @@
     launcher.addEventListener('touchstart', onDown, { passive: false });
   }
 
-  // ---------- chat window: rounded wrapper + square iframe (crisp corners)
+  // ---------- chat window: shadow layer > clip layer > iframe
+  // The rounded clip is applied by a dedicated, composited layer
+  // (translateZ + webkit mask) — this removes the white corner fringes
+  // that a plain border-radius + overflow:hidden on an iframe produces.
 
   function createFrame() {
-    frameWrap = document.createElement('div');
+    frameWrap = document.createElement('div'); // outer: shadow + geometry
+    frameClip = document.createElement('div'); // inner: the rounded clip
     frame = document.createElement('iframe');
     frame.src = apiOrigin + '/embed/' + encodeURIComponent(botKey);
     frame.title = attrs.label;
     frame.setAttribute('allow', 'clipboard-write');
     frame.style.cssText = 'display:block;width:100%;height:100%;border:0;background:#fff;';
-    frameWrap.appendChild(frame);
+    frameClip.style.cssText = [
+      'position:absolute',
+      'left:0',
+      'top:0',
+      'width:100%',
+      'height:100%',
+      'overflow:hidden',
+      'border-radius:inherit',
+      'transform:translateZ(0)',
+      'background:#fff',
+      '-webkit-mask-image:-webkit-radial-gradient(#fff,#000)',
+    ].join(';');
+    frameClip.appendChild(frame);
+    frameWrap.appendChild(frameClip);
     document.body.appendChild(frameWrap);
     frameWrap.style.display = 'none';
     applyFrame();
@@ -418,8 +436,8 @@
       frameWrap.style.height = '100%';
       frameWrap.style.borderRadius = '0px';
       frameWrap.style.boxShadow = 'none';
-      frameWrap.style.overflow = 'hidden';
-      frameWrap.style.background = '#fff';
+      frameWrap.style.overflow = 'visible';
+      frameWrap.style.background = 'transparent';
       frameWrap.style.zIndex = Z;
       return;
     }
@@ -441,8 +459,8 @@
     frameWrap.style.height = h + 'px';
     frameWrap.style.borderRadius = effRadius() + 'px';
     frameWrap.style.boxShadow = shadowFor('window');
-    frameWrap.style.overflow = 'hidden';
-    frameWrap.style.background = '#fff';
+    frameWrap.style.overflow = 'visible';
+    frameWrap.style.background = 'transparent';
     frameWrap.style.zIndex = Z;
   }
 
