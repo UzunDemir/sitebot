@@ -14,7 +14,7 @@
    ```bash
    cd C:\sitebot
    git remote add origin https://github.com/<ВАШ-ЛОГИН>/sitebot.git
-   git push -u origin master
+   git push -u origin main
    ```
    Если Git Credential Manager попросит вход — откроется окно браузера, подтвердите.
 3. vercel.com → **Add New… → Project → Import Git Repository** → `sitebot`.
