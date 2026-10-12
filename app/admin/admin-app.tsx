@@ -523,16 +523,54 @@ function DocumentsPanel({
     form.append('file', file);
 
     const res = await api('/api/admin/documents', { method: 'POST', body: form });
-    setBusy(false);
-
+    const label = title.trim() || file.name;
     if (res.ok && res.data) {
-      const status =
-        res.data.status === 'skipped' ? 'без изменений' : `проиндексировано, чанков: ${res.data.chunks}`;
-      setMessage({ kind: 'ok', text: `«${title.trim() || file.name}» — ${status}.` });
       setTitle('');
       if (fileRef.current) fileRef.current.value = '';
+      if (res.data.status === 'partial') {
+        setMessage({
+          kind: 'ok',
+          text: `«${label}» — большой документ, индексирую частями (${res.data.chunks}/${res.data.total})…`,
+        });
+        onChanged();
+        await continueIngest(res.data.documentId, label);
+      } else if (res.data.status === 'skipped') {
+        setMessage({ kind: 'ok', text: `«${label}» — без изменений.` });
+      } else {
+        setMessage({ kind: 'ok', text: `«${label}» — проиндексировано, чанков: ${res.data.chunks}.` });
+      }
     } else {
       setMessage({ kind: 'err', text: errorText(res.data, 'Не удалось загрузить документ.') });
+    }
+    setBusy(false);
+    onChanged();
+  }
+
+  /** Big documents are embedded across several passes (provider rate limits). */
+  async function continueIngest(docId: string, label: string) {
+    for (let round = 1; round <= 10; round += 1) {
+      const res = await api(`/api/admin/documents/${docId}`, { method: 'POST' });
+      if (!res.ok || !res.data) {
+        setMessage({
+          kind: 'err',
+          text: errorText(res.data, 'Индексация прервалась — нажмите «повторить» позже.'),
+        });
+        break;
+      }
+      const status = String(res.data.status);
+      if (status === 'ready') {
+        setMessage({ kind: 'ok', text: `«${label}» — готово, чанков: ${res.data.chunks}.` });
+        break;
+      }
+      if (status === 'skipped') {
+        setMessage({ kind: 'ok', text: `«${label}» — без изменений.` });
+        break;
+      }
+      setMessage({
+        kind: 'ok',
+        text: `«${label}» — индексирую… ${res.data.chunks}/${res.data.total} чанков`,
+      });
+      onChanged();
     }
     onChanged();
   }
@@ -614,13 +652,7 @@ function DocumentsPanel({
                   type="button"
                   onClick={async () => {
                     setMessage(null);
-                    const res = await api(`/api/admin/documents/${doc.id}`, { method: 'POST' });
-                    setMessage(
-                      res.ok
-                        ? { kind: 'ok', text: `«${doc.title}» — индекс пересобран.` }
-                        : { kind: 'err', text: errorText(res.data, 'Не удалось переиндексировать.') },
-                    );
-                    onChanged();
+                    await continueIngest(doc.id, doc.title);
                   }}
                   className="rounded-lg border border-amber-200 px-2.5 py-1 text-[11px] text-amber-700 hover:bg-amber-50"
                 >
