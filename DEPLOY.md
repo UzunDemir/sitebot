@@ -51,9 +51,13 @@ npx vercel deploy --prod
 - Локально работает, прод — нет → почти всегда дело в env-переменных
   именно прод-окружения.
 - Посторонние видят 404 или просьбу войти в Vercel → включена Deployment
-  Protection: Settings → Deployment Protection → Vercel Authentication →
-  «Standard Protection» (прод публичный, превью защищены) или «Disabled».
-  Применяется сразу, Redeploy не нужен.
+  Protection: Project → Settings → Deployment Protection → Vercel Authentication →
+  **Standard Protection** (прод-домен публичный; превью и хешевые deployment-URL
+  остаются закрытыми — это норма) или **Disabled** (открыто всё).
+  После выбора обязательно нажмите **Save** — без него не применится.
+- Публичный адрес проекта — домен из Project → Settings → Domains
+  (вида `sitebot-<team>.vercel.app`). НЕ используйте ссылку деплоймента
+  с хешем (`sitebot-<hash>-...`): под защитой она всегда закрыта.
 
 ## Заметки
 
