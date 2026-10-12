@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   if (probe.error) {
     console.error('❌ Нет доступа к таблице bots:', probe.error.message);
     console.error('   1) Выполните sql/0001_init.sql в Supabase → SQL Editor');
-    console.error('   2) Проверьте SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY в .env.local');
+    console.error('   2) Проверьте SUPABASE_URL и серверный ключ (SUPABASE_SERVICE_ROLE_KEY или SUPABASE_SECRET_KEY) в .env.local');
     process.exit(1);
   }
 

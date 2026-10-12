@@ -10,7 +10,7 @@
 
 1. **Supabase**: создайте проект → SQL Editor → выполните `sql/0001_init.sql`.
 2. **Ключи**: скопируйте `.env.example` → `.env.local` и заполните:
-   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API;
+   - `SUPABASE_URL` и серверный ключ — Supabase → Connect → Server: в новом дашборде он называется `SUPABASE_SECRET_KEY` (прежнее имя — `service_role`), впишите его в строку `SUPABASE_SERVICE_ROLE_KEY`;
    - `DEEPSEEK_API_KEY` — platform.deepseek.com;
    - `GOOGLE_GENERATIVE_AI_API_KEY` — aistudio.google.com (бесплатно, без карты).
 3. **Демо-база**: `npm run seed` (7 документов интернет-магазина «Северный»).
