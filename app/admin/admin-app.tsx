@@ -646,6 +646,69 @@ function BotSettings({
 
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="space-y-1 text-xs text-slate-500">
+            Отступ от края, px (0–300)
+            <input
+              type="number"
+              min={0}
+              max={300}
+              value={theme.offsetX ?? 20}
+              onChange={(e) => setThemeField('offsetX', Number(e.target.value) || 0)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Отступ снизу, px (0–300)
+            <input
+              type="number"
+              min={0}
+              max={300}
+              value={theme.offsetY ?? 20}
+              onChange={(e) => setThemeField('offsetY', Number(e.target.value) || 0)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Тень
+            <select
+              value={theme.shadow ?? 'medium'}
+              onChange={(e) => setThemeField('shadow', e.target.value as 'none' | 'soft' | 'medium' | 'strong')}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="medium">Обычная</option>
+              <option value="soft">Мягкая</option>
+              <option value="strong">Глубокая</option>
+              <option value="none">Без тени</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Анимация появления
+            <select
+              value={theme.animationIn ?? 'slide'}
+              onChange={(e) => setThemeField('animationIn', e.target.value as 'none' | 'fade' | 'slide' | 'pop')}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="slide">Выезд снизу</option>
+              <option value="fade">Плавное проявление</option>
+              <option value="pop">Масштабирование</option>
+              <option value="none">Без анимации</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500 sm:col-span-2">
+            Прозрачность кнопки: {Math.round((theme.opacity ?? 1) * 100)}%
+            <input
+              type="range"
+              min={40}
+              max={100}
+              step={5}
+              value={Math.round((theme.opacity ?? 1) * 100)}
+              onChange={(e) => setThemeField('opacity', Number(e.target.value) / 100)}
+              className="w-full"
+            />
+          </label>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="space-y-1 text-xs text-slate-500">
             Ширина окна, px (320–560)
             <input
               type="number"

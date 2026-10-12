@@ -49,6 +49,16 @@ export type WidgetTheme = {
   launcherSize?: number;
   /** Optional visible text next to the launcher. */
   launcherLabel?: string;
+  /** Horizontal offset from the chosen side, px (0..300). */
+  offsetX?: number;
+  /** Vertical offset from the bottom, px (0..300). */
+  offsetY?: number;
+  /** Launcher opacity (0.4..1). */
+  opacity?: number;
+  /** Shadow strength for launcher and window. */
+  shadow?: 'none' | 'soft' | 'medium' | 'strong';
+  /** Entrance/exit animation. */
+  animationIn?: 'none' | 'fade' | 'slide' | 'pop';
   /** Chat window width in px (320..560). */
   windowWidth?: number;
   /** Chat window height in px (400..820). */
@@ -76,6 +86,10 @@ const COLOR_KEYS: Array<keyof WidgetColors> = [
   'pageBg',
   'inputBg',
 ];
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 function str(value: unknown, max: number): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined;
@@ -149,6 +163,17 @@ export function parseWidgetTheme(input: unknown): WidgetTheme {
   }
   theme.launcherSize = intInRange(raw.launcherSize, 48, 80);
   theme.launcherLabel = str(raw.launcherLabel, 40);
+  theme.offsetX = intInRange(raw.offsetX, 0, 300);
+  theme.offsetY = intInRange(raw.offsetY, 0, 300);
+  if (typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)) {
+    theme.opacity = Math.round(clamp(raw.opacity, 0.4, 1) * 100) / 100;
+  }
+  if (raw.shadow === 'none' || raw.shadow === 'soft' || raw.shadow === 'medium' || raw.shadow === 'strong') {
+    theme.shadow = raw.shadow;
+  }
+  if (raw.animationIn === 'none' || raw.animationIn === 'fade' || raw.animationIn === 'slide' || raw.animationIn === 'pop') {
+    theme.animationIn = raw.animationIn;
+  }
   theme.windowWidth = intInRange(raw.windowWidth, 320, 560);
   theme.windowHeight = intInRange(raw.windowHeight, 400, 820);
   theme.radius = intInRange(raw.radius, 0, 28);

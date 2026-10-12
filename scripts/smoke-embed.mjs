@@ -141,6 +141,9 @@ try {
         windowWidth: 420,
         dark: true,
         colors: { headerBg: '#101010' },
+        offsetX: 30,
+        shadow: 'strong',
+        animationIn: 'pop',
         proactive: { enabled: true, delaySeconds: 5, text: 'Тизер' },
       },
     })
@@ -154,6 +157,10 @@ try {
   check('theme.position пробрасывается', t.position === 'left');
   check('theme.dark/colors пробрасываются', t.dark === true && t.colors?.headerBg === '#101010');
   check('theme.proactive пробрасывается', t.proactive?.enabled === true && t.proactive?.delaySeconds === 5);
+  check(
+    'theme.offsetX/shadow/animation пробрасываются',
+    t.offsetX === 30 && t.shadow === 'strong' && t.animationIn === 'pop',
+  );
 } finally {
   await supabase.from('bots').update({ theme: originalTheme }).eq('id', bot.id);
   console.log('  ↷ theme восстановлена');
