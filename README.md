@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# sitebot — встраиваемый RAG-ассистент
 
-## Getting Started
+Демо-бот: отвечает по вашей базе знаний, стримит ответ и показывает источники.
+База знаний заменяется без деплоя (фаза 2 добавит админку; пока — seed-скрипт).
 
-First, run the development server:
+**Стек:** Next.js 16 (App Router, TS, Tailwind 4) · Vercel AI SDK 7 · DeepSeek `deepseek-flash`
+· Supabase Postgres + pgvector · эмбеддинги — Google Gemini (бесплатный tier, сменный слой).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Быстрый старт
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. **Supabase**: создайте проект → SQL Editor → выполните `sql/0001_init.sql`.
+2. **Ключи**: скопируйте `.env.example` → `.env.local` и заполните:
+   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API;
+   - `DEEPSEEK_API_KEY` — platform.deepseek.com;
+   - `GOOGLE_GENERATIVE_AI_API_KEY` — aistudio.google.com (бесплатно, без карты).
+3. **Демо-база**: `npm run seed` (7 документов интернет-магазина «Северный»).
+4. **Запуск**: `npm run dev` → http://localhost:3000
+5. Спросите: «Сколько идёт возврат денег?» — ответ придёт с цитатами.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Деплой на Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Пуш на GitHub → Import в Vercel (или `npx vercel`).
+2. Project → Settings → Environment Variables — те же 4 переменные, что в `.env.local`.
+3. Deploy. Сборка не требует env (всё читается лениво в рантайме).
 
-## Learn More
+## Архитектура
 
-To learn more about Next.js, take a look at the following resources:
+- `sql/0001_init.sql` — bots, documents, chunks (vector(1536) + tsvector), conversations,
+  messages, feedback, quota_counters; функции `match_chunks` / `search_chunks_fts`;
+  RLS включён без анонимных политик.
+- `lib/env.ts` — серверные переменные, ленивое чтение (сборка без env).
+- `lib/supabase.ts` — серверный клиент (service role). Браузер в Supabase не ходит.
+- `lib/embeddings.ts` — сменный слой эмбеддингов (Gemini, 1536 dims, батчи по 32).
+- `lib/models.ts` — реестр LLM (`provider:model`): DeepSeek flash / v4-pro.
+- `lib/retrieval.ts` — гибридный поиск: pgvector + FTS → слияние RRF (k=60).
+- `lib/prompts.ts` — системный промпт + контекст с маркерами `[n]`.
+- `lib/chat-store.ts` — персистенция диалогов, токенов и стоимости.
+- `app/api/chat/route.ts` — валидация бота → ретрив → `streamText` → UI-стрим
+  (источники уходят клиенту data-частью `data-sources`).
+- `app/page.tsx` + `app/chat.tsx` — чат-страница (`useChat`, цитаты-чипы, статусы).
+- `scripts/seed.ts` — идемпотентный сид демо-базы (hash-проверка, пропуск неизменённых).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Заметки
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Thinking-режим DeepSeek V4 выключен по умолчанию (`bots.thinking_enabled=false`) — ниже
+  латентность; включение — поправка флага у бота (температура при thinking игнорируется).
+- Смена эмбеддинг-провайдера: правка `lib/embeddings.ts` + `vector(N)` в SQL + повторный seed
+  (смена модели эмбеддингов = полная переиндексация).
+- Роадмап: Фаза 2 — админка и ingestion со статусами; Фаза 3 — виджет `<script>` +
+  origin-allowlist + квоты; Фаза 4 — evals/CI, опционально Langfuse.
