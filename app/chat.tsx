@@ -36,7 +36,8 @@ function sourcesFromParts(parts: unknown[]): SourceItem[] {
 }
 
 export default function ChatLoader() {
-  const [bot, setBot] = useState<BotInfo | null>(null);
+  const [bots, setBots] = useState<BotInfo[] | null>(null);
+  const [selectedKey, setSelectedKey] = useState('');
   const [loadError, setLoadError] = useState<LoadError | null>(null);
 
   useEffect(() => {
@@ -46,10 +47,16 @@ export default function ChatLoader() {
         const res = await fetch('/api/bot');
         const payload = await res.json().catch(() => null);
         if (cancelled) return;
-        if (res.ok && payload) {
-          setBot(payload as BotInfo);
+        if (res.ok && payload && Array.isArray(payload.bots) && payload.bots.length > 0) {
+          const list = payload.bots as BotInfo[];
+          setBots(list);
+          setSelectedKey(list[0].publicKey);
+        } else if (res.status === 404) {
+          setLoadError('not_seeded');
+        } else if (res.status === 500) {
+          setLoadError((payload?.error as LoadError) ?? 'not_configured');
         } else {
-          setLoadError((payload?.error as LoadError) ?? 'network');
+          setLoadError('network');
         }
       } catch {
         if (!cancelled) setLoadError('network');
@@ -61,8 +68,31 @@ export default function ChatLoader() {
   }, []);
 
   if (loadError) return <SetupCard variant={loadError} />;
-  if (!bot) return <LoadingCard />;
-  return <Chat bot={bot} />;
+  if (!bots || bots.length === 0) return <LoadingCard />;
+  const selected = bots.find((b) => b.publicKey === selectedKey) ?? bots[0];
+
+  return (
+    <div>
+      {bots.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span>Бот:</span>
+          <select
+            value={selected.publicKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-500"
+          >
+            {bots.map((bot) => (
+              <option key={bot.publicKey} value={bot.publicKey}>
+                {bot.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-slate-400">при переключении начинается новый диалог</span>
+        </div>
+      )}
+      <Chat key={selected.publicKey} bot={selected} />
+    </div>
+  );
 }
 
 function LoadingCard() {

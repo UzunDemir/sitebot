@@ -101,12 +101,15 @@ try {
     // 1) bot endpoint
     const botRes = await fetch(`${BASE}/api/bot`);
     const botJson = await botRes.json().catch(() => null);
+    const firstBot = botJson?.bots?.[0] ?? null;
     check(
       '/api/bot → 200',
       botRes.ok,
-      botJson?.name ? `бот: ${botJson.name}` : `HTTP ${botRes.status}`,
+      firstBot?.name
+        ? `бот: ${firstBot.name} (активных: ${botJson.bots.length})`
+        : `HTTP ${botRes.status}`,
     );
-    check('/api/bot: есть publicKey', Boolean(botJson?.publicKey));
+    check('/api/bot: есть publicKey', Boolean(firstBot?.publicKey));
 
     // 2) chat endpoint
     console.log('── /api/chat: реальный вопрос ──');
