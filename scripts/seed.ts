@@ -2,20 +2,11 @@
  * Idempotent seed script: demo bot + knowledge base.
  *
  * Usage: npm run seed   (reads .env.local from the project root)
- *
- * What it does:
- *   1. loads .env.local
- *   2. checks schema connectivity (prints actionable errors)
- *   3. creates/updates the demo bot
- *   4. for each demo document: chunks -> embeddings (Google) -> upsert into Supabase
- *   5. skips unchanged documents (hash + status = ready)
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { getSupabase } from '../lib/supabase';
-import { embedTexts, toVectorLiteral, EMBEDDING_DIM } from '../lib/embeddings';
-import { chunkDocument } from '../lib/chunker';
+import { ingestDocument } from '../lib/ingest';
 import { DEMO_KB } from './demo-kb';
 
 function loadEnvLocal(): void {
@@ -98,102 +89,29 @@ async function main(): Promise<void> {
   }
   console.log(`   public_key: ${publicKey}`);
 
-  // --- documents + chunks
-  let embeddedChunks = 0;
+  // --- documents (shared ingestion pipeline)
+  let createdChunks = 0;
+  let skippedDocs = 0;
+  const failed: string[] = [];
+
   for (const doc of DEMO_KB) {
-    const hash = createHash('sha256').update(doc.content).digest('hex');
-
-    const existing = await supabase
-      .from('documents')
-      .select('id, content_hash, status')
-      .eq('bot_id', botId)
-      .eq('title', doc.title)
-      .maybeSingle();
-    if (existing.error) throw existing.error;
-
-    if (existing.data && existing.data.content_hash === hash && existing.data.status === 'ready') {
-      const count = await supabase
-        .from('chunks')
-        .select('id', { count: 'exact', head: true })
-        .eq('document_id', existing.data.id);
-      if ((count.count ?? 0) > 0) {
-        console.log(`↷ ${doc.title} — без изменений (${count.count} чанков)`);
-        continue;
-      }
-    }
-
-    let documentId: string;
-    if (existing.data) {
-      documentId = existing.data.id as string;
-      const upd = await supabase
-        .from('documents')
-        .update({
-          content: doc.content,
-          content_hash: hash,
-          source: doc.source,
-          status: 'processing',
-          error: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', documentId);
-      if (upd.error) throw upd.error;
-      const del = await supabase.from('chunks').delete().eq('document_id', documentId);
-      if (del.error) throw del.error;
-    } else {
-      const ins = await supabase
-        .from('documents')
-        .insert({
-          bot_id: botId,
-          title: doc.title,
-          source: doc.source,
-          content: doc.content,
-          content_hash: hash,
-          status: 'processing',
-        })
-        .select('id')
-        .single();
-      if (ins.error) throw ins.error;
-      documentId = ins.data.id as string;
-    }
-
     try {
-      const drafts = chunkDocument(doc.content);
-      const vectors = await embedTexts(drafts.map((draft) => draft.content));
-      if (vectors.length !== drafts.length) {
-        throw new Error(`количество эмбеддингов (${vectors.length}) не совпадает с чанками (${drafts.length})`);
+      const outcome = await ingestDocument({
+        botId,
+        title: doc.title,
+        source: doc.source,
+        content: doc.content,
+      });
+      if (outcome.status === 'skipped') {
+        skippedDocs += 1;
+        console.log(`↷ ${doc.title} — без изменений (${outcome.chunks} чанков)`);
+      } else {
+        createdChunks += outcome.chunks;
+        console.log(`✓ ${doc.title} — ${outcome.chunks} чанков`);
       }
-      if (vectors[0] && vectors[0].length !== EMBEDDING_DIM) {
-        throw new Error(`неожиданная размерность эмбеддинга: ${vectors[0].length}, ожидали ${EMBEDDING_DIM}`);
-      }
-
-      const rows = drafts.map((draft, i) => ({
-        bot_id: botId,
-        document_id: documentId,
-        idx: draft.idx,
-        content: draft.content,
-        embedding: toVectorLiteral(vectors[i]),
-      }));
-
-      const insChunks = await supabase.from('chunks').insert(rows);
-      if (insChunks.error) throw insChunks.error;
-
-      const updDoc = await supabase
-        .from('documents')
-        .update({
-          status: 'ready',
-          chunk_count: rows.length,
-          error: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', documentId);
-      if (updDoc.error) throw updDoc.error;
-
-      embeddedChunks += rows.length;
-      console.log(`✓ ${doc.title} — ${rows.length} чанков`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await supabase.from('documents').update({ status: 'error', error: message }).eq('id', documentId);
-      throw new Error(`Документ «${doc.title}»: ${message}`);
+      failed.push(doc.title);
+      console.error(`❌ ${doc.title}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -201,8 +119,15 @@ async function main(): Promise<void> {
     .from('chunks')
     .select('id', { count: 'exact', head: true })
     .eq('bot_id', botId);
-  console.log(`\n✅ Готово. Векторов создано в этом прогоне: ${embeddedChunks}. Всего чанков у бота: ${stats.count ?? '?'}`);
-  console.log('▶ Дальше: npm run dev → http://localhost:3000');
+  console.log(
+    `\nИтог: ${createdChunks} новых чанков, ${skippedDocs} документов без изменений, ошибок: ${failed.length}. Всего чанков: ${stats.count ?? '?'}`,
+  );
+
+  if (failed.length > 0) {
+    console.error('❌ Не удалось обработать:', failed.join(', '));
+    process.exit(1);
+  }
+  console.log('✅ Готово. Дальше: npm run dev → http://localhost:3000');
 }
 
 main().catch((err) => {

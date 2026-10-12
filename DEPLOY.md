@@ -19,12 +19,13 @@
    Если Git Credential Manager попросит вход — откроется окно браузера, подтвердите.
 3. vercel.com → **Add New… → Project → Import Git Repository** → `sitebot`.
 4. Framework Preset определится сам (Next.js) — ничего не менять.
-5. Раскройте **Environment Variables** и добавьте четыре (для Production;
+5. Раскройте **Environment Variables** и добавьте пять (для Production;
    значения копируйте из `.env.local`):
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY` (он же новый `SUPABASE_SECRET_KEY`)
    - `DEEPSEEK_API_KEY`
    - `GOOGLE_GENERATIVE_AI_API_KEY`
+   - `ADMIN_SECRET` (пароль от `/admin`)
 6. **Deploy** (~1–2 минуты). Проверка: открыть выданный URL и задать
    «Сколько идёт возврат денег?» — ответ придёт с источниками.
 
