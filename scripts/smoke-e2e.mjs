@@ -132,6 +132,7 @@ try {
     const raw = await chatRes.text();
     check('ответ непустой', raw.length > 0, `${raw.length} симв.`);
     check('есть data-sources (источники)', raw.includes('data-sources'));
+    check('есть data-feedback (id ответа для оценок)', raw.includes('data-feedback'));
     check('есть текст ответа', /[А-Яа-я]/.test(raw));
 
     const answer = [...extractStreamField(raw, 'text'), ...extractStreamField(raw, 'delta')]

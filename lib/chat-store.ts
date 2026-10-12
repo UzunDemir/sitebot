@@ -66,18 +66,23 @@ export type AssistantMessagePayload = {
 export async function saveAssistantMessage(
   conversationId: string,
   payload: AssistantMessagePayload,
-): Promise<void> {
+): Promise<number> {
   const supabase = getSupabase();
-  const { error } = await supabase.from('messages').insert({
-    conversation_id: conversationId,
-    role: 'assistant',
-    content: payload.content,
-    citations: payload.citations,
-    model: payload.model,
-    input_tokens: payload.inputTokens,
-    output_tokens: payload.outputTokens,
-    cost_usd: payload.costUsd,
-    latency_ms: payload.latencyMs,
-  });
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: payload.content,
+      citations: payload.citations,
+      model: payload.model,
+      input_tokens: payload.inputTokens,
+      output_tokens: payload.outputTokens,
+      cost_usd: payload.costUsd,
+      latency_ms: payload.latencyMs,
+    })
+    .select('id')
+    .single();
   if (error) throw error;
+  return data.id as number;
 }

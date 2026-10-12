@@ -1,9 +1,10 @@
 /**
  * Chat endpoint.
  *
- * Pipeline: validate bot -> embed query -> hybrid search (vector + FTS, RRF)
- * -> build grounded prompt -> streamText (DeepSeek) -> stream UI messages
- * with a `data-sources` part, persisting usage/cost on finish.
+ * Pipeline: validate bot -> daily quota -> embed query -> hybrid search
+ * (vector + FTS, RRF) -> grounded prompt -> streamText (DeepSeek) ->
+ * UI message stream with `data-sources` and, after persistence,
+ * `data-feedback` (the stored assistant message id for ratings).
  */
 
 import {
@@ -22,6 +23,9 @@ import { ensureConversation, saveUserMessage, saveAssistantMessage } from '@/lib
 import { estimateCostUsd } from '@/lib/pricing';
 
 export const maxDuration = 60;
+
+/** Demo-grade per-bot daily quota (chat requests). */
+const DAILY_REQUEST_LIMIT = 300;
 
 type ChatRequestBody = {
   messages?: UIMessage[];
@@ -52,6 +56,36 @@ function messageText(message: UIMessage | undefined): string {
     })
     .join('\n')
     .trim();
+}
+
+function utcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Best-effort daily usage accounting (read-modify-write, demo-grade). */
+async function bumpQuota(botId: string, requestsDelta: number, tokensDelta: number): Promise<void> {
+  try {
+    const supabase = getSupabase();
+    const day = utcDay();
+    const current = await supabase
+      .from('quota_counters')
+      .select('requests, tokens')
+      .eq('bot_id', botId)
+      .eq('day', day)
+      .maybeSingle();
+    if (current.error) {
+      console.warn('[chat] quota read failed:', current.error.message);
+      return;
+    }
+    const requests = (current.data?.requests ?? 0) + requestsDelta;
+    const tokens = (current.data?.tokens ?? 0) + tokensDelta;
+    const upd = await supabase
+      .from('quota_counters')
+      .upsert({ bot_id: botId, day, requests, tokens }, { onConflict: 'bot_id,day' });
+    if (upd.error) console.warn('[chat] quota write failed:', upd.error.message);
+  } catch (err) {
+    console.warn('[chat] quota update failed:', err);
+  }
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -90,6 +124,24 @@ export async function POST(req: Request): Promise<Response> {
       return jsonError('Bot not found', 404);
     }
 
+    // --- daily quota gate
+    const quota = await supabase
+      .from('quota_counters')
+      .select('requests')
+      .eq('bot_id', bot.id)
+      .eq('day', utcDay())
+      .maybeSingle();
+    if (!quota.error && (quota.data?.requests ?? 0) >= DAILY_REQUEST_LIMIT) {
+      return Response.json(
+        {
+          error: 'quota_exceeded',
+          message: `Дневной лимит демо-бота исчерпан (${DAILY_REQUEST_LIMIT} запросов в сутки). Попробуйте завтра.`,
+        },
+        { status: 429 },
+      );
+    }
+    await bumpQuota(bot.id, 1, 0);
+
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
     const query = messageText(lastUserMessage);
     if (!query) {
@@ -121,35 +173,6 @@ export async function POST(req: Request): Promise<Response> {
           thinking: { type: bot.thinking_enabled ? 'enabled' : 'disabled' },
         },
       },
-      onFinish: async ({ text, usage }) => {
-        if (!conversationId) return;
-        const u = usage as
-          | { inputTokens?: number; outputTokens?: number; promptTokens?: number; completionTokens?: number }
-          | undefined;
-        const inputTokens = u?.inputTokens ?? u?.promptTokens ?? 0;
-        const outputTokens = u?.outputTokens ?? u?.completionTokens ?? 0;
-        const latencyMs = Date.now() - startedAt;
-        try {
-          await saveAssistantMessage(conversationId, {
-            content: text,
-            citations: sources.map((source, index) => ({
-              n: index + 1,
-              chunkId: source.chunkId,
-              documentId: source.documentId,
-              title: source.title,
-              source: source.source,
-              similarity: source.similarity,
-            })),
-            model: bot.model_id,
-            inputTokens,
-            outputTokens,
-            costUsd: estimateCostUsd(bot.model_id, inputTokens, outputTokens),
-            latencyMs,
-          });
-        } catch (err) {
-          console.warn('[chat] failed to persist assistant message:', err);
-        }
-      },
     });
 
     const stream = createUIMessageStream({
@@ -166,7 +189,49 @@ export async function POST(req: Request): Promise<Response> {
             })),
           },
         });
-        writer.merge(toUIMessageStream({ stream: result.stream }));
+
+        await writer.merge(toUIMessageStream({ stream: result.stream }));
+
+        // After the stream completes: persist the answer and hand the
+        // client the stored message id so it can send feedback.
+        const text = await result.text;
+        const usage = (await result.usage) as
+          | { inputTokens?: number; outputTokens?: number; promptTokens?: number; completionTokens?: number }
+          | undefined;
+        const inputTokens = usage?.inputTokens ?? usage?.promptTokens ?? 0;
+        const outputTokens = usage?.outputTokens ?? usage?.completionTokens ?? 0;
+
+        if (conversationId) {
+          try {
+            const messageId = await saveAssistantMessage(conversationId, {
+              content: text,
+              citations: sources.map((source, index) => ({
+                n: index + 1,
+                chunkId: source.chunkId,
+                documentId: source.documentId,
+                title: source.title,
+                source: source.source,
+                similarity: source.similarity,
+              })),
+              model: bot.model_id,
+              inputTokens,
+              outputTokens,
+              costUsd: estimateCostUsd(bot.model_id, inputTokens, outputTokens),
+              latencyMs: Date.now() - startedAt,
+            });
+            writer.write({
+              type: 'data-feedback',
+              id: 'feedback',
+              data: { messageId, conversationId },
+            });
+          } catch (err) {
+            console.warn('[chat] failed to persist assistant message:', err);
+          }
+        }
+
+        if (inputTokens + outputTokens > 0) {
+          await bumpQuota(bot.id, 0, inputTokens + outputTokens);
+        }
       },
     });
 
