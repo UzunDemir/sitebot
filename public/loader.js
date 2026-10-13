@@ -32,13 +32,6 @@
     return;
   }
 
-  try {
-    window.__sitebotLoader = LOADER_VERSION;
-  } catch (e) {
-    // ignore
-  }
-  console.log('[sitebot] loader ' + LOADER_VERSION + ' · форма подтянется с API · bot ' + botKey);
-
   var apiOrigin = new URL(script.src).origin;
   var attrs = {
     color: script.getAttribute('data-color'),
@@ -49,7 +42,13 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v9';
+  var LOADER_VERSION = 'v10';
+  try {
+    window.__sitebotLoader = LOADER_VERSION;
+  } catch (e) {
+    // ignore
+  }
+  console.log('[sitebot] loader ' + LOADER_VERSION + ' · bot ' + botKey);
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
@@ -324,6 +323,7 @@
       var dy = p.clientY - startY;
       if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
       var np = clampPos({ left: startLeft + dx, top: startTop + dy });
+      sessionPos = np;
       launcher.style.left = np.left + 'px';
       launcher.style.top = np.top + 'px';
       if (labelEl) labelEl.style.visibility = 'hidden';

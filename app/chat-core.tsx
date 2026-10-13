@@ -171,7 +171,9 @@ export function Chat({
   function onHeaderPointerDown(e: ReactPointerEvent<HTMLElement>) {
     if (!draggable) return;
     if ((e.target as HTMLElement).closest('button')) return;
-    dragRef.current = { x: e.clientX, y: e.clientY };
+    // Screen coordinates: clientX lives in the iframe viewport, which
+    // moves together with the window — deltas would oscillate (jitter).
+    dragRef.current = { x: e.screenX, y: e.screenY };
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -181,10 +183,10 @@ export function Chat({
 
   function onHeaderPointerMove(e: ReactPointerEvent<HTMLElement>) {
     if (!draggable || !dragRef.current) return;
-    const dx = e.clientX - dragRef.current.x;
-    const dy = e.clientY - dragRef.current.y;
+    const dx = e.screenX - dragRef.current.x;
+    const dy = e.screenY - dragRef.current.y;
     if (dx === 0 && dy === 0) return;
-    dragRef.current = { x: e.clientX, y: e.clientY };
+    dragRef.current = { x: e.screenX, y: e.screenY };
     try {
       window.parent.postMessage({ type: 'sitebot:move', dx, dy }, '*');
     } catch {
