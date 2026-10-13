@@ -77,6 +77,10 @@ function toUIMessage(
     if (showSources && items.length > 0) {
       parts.push({ type: 'data-sources', id: 'sources', data: { items } });
     }
+    if (message.isProactive) {
+      // Bot-initiated touch: the widget marks it «бот написал сам».
+      parts.push({ type: 'data-proactive', id: 'proactive', data: {} });
+    }
     parts.push({
       type: 'data-feedback',
       id: 'feedback',

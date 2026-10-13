@@ -42,7 +42,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v11';
+  var LOADER_VERSION = 'v12';
   try {
     window.__sitebotLoader = LOADER_VERSION;
   } catch (e) {
@@ -74,6 +74,7 @@
   var frame = null;
   var teaser = null;
   var labelEl = null;
+  var badgeEl = null;
 
   function clamp(v, min, max) {
     return Math.min(max, Math.max(min, v));
@@ -242,6 +243,58 @@
     if (!labelEl.parentNode) document.body.appendChild(labelEl);
   }
 
+  function notifyFrame(type) {
+    if (!frame || !frame.contentWindow) return;
+    try {
+      frame.contentWindow.postMessage({ type: type }, apiOrigin);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function positionBadge() {
+    if (!badgeEl) return;
+    var size = effSize();
+    var pos = currentPos();
+    badgeEl.style.left = pos.left + size - 14 + 'px';
+    badgeEl.style.top = pos.top - 8 + 'px';
+  }
+
+  /** Unread counter on the launcher (touches received while collapsed). */
+  function updateBadge(count) {
+    var value = typeof count === 'number' && count > 0 ? Math.floor(count) : 0;
+    if (value <= 0) {
+      if (badgeEl && badgeEl.parentNode) badgeEl.parentNode.removeChild(badgeEl);
+      badgeEl = null;
+      return;
+    }
+    if (!badgeEl) {
+      badgeEl = document.createElement('div');
+      badgeEl.setAttribute('aria-hidden', 'true');
+      badgeEl.style.cssText = [
+        'position:fixed',
+        'min-width:20px',
+        'height:20px',
+        'padding:0 5px',
+        'border-radius:999px',
+        'background:#ef4444',
+        'color:#fff',
+        'font-size:12px',
+        'font-weight:600',
+        'line-height:18px',
+        'text-align:center',
+        'border:2px solid #fff',
+        'box-shadow:0 2px 8px rgba(0,0,0,0.28)',
+        'box-sizing:border-box',
+        'z-index:' + Z,
+        'pointer-events:none',
+      ].join(';');
+      document.body.appendChild(badgeEl);
+    }
+    badgeEl.textContent = value > 9 ? '9+' : String(value);
+    positionBadge();
+  }
+
   function applyLauncher() {
     var size = effSize();
     var pos = currentPos();
@@ -272,6 +325,7 @@
     ].join(';');
     renderLauncherIcon();
     applyLabel();
+    positionBadge();
     if (teaser) positionTeaser();
   }
 
@@ -534,8 +588,11 @@
       hideTeaser(false);
       applyFrame();
       animateOpen();
+      updateBadge(0);
+      notifyFrame('sitebot:chat-opened');
     } else {
       animateClose();
+      notifyFrame('sitebot:chat-closed');
     }
     renderLauncherIcon();
     applyLabel();
@@ -647,6 +704,8 @@
           hideTeaser(false);
           showTeaser(data.text);
         }
+      } else if (data.type === 'sitebot:unread') {
+        updateBadge(typeof data.count === 'number' ? data.count : 0);
       } else if (data.type === 'sitebot:move') {
         moveWindow(data.dx, data.dy);
       } else if (data.type === 'sitebot:move-reset') {

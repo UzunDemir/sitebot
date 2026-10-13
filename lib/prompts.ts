@@ -5,7 +5,13 @@
  */
 
 import type { RetrievedChunk } from './retrieval';
-import { effectiveAggressiveness, type BotChattiness, type BotGoal, type BotSettings } from './bot-settings';
+import {
+  BOT_SETTINGS_DEFAULTS,
+  effectiveAggressiveness,
+  type BotChattiness,
+  type BotGoal,
+  type BotSettings,
+} from './bot-settings';
 
 const CHATTINESS_RULES: Record<BotChattiness, string> = {
   strict:
@@ -85,6 +91,48 @@ function toneRule(value: number): string | null {
   return null;
 }
 
+/** Шкалы характера (юмор / хитрость / остроумие) → директивы поведения. */
+export function personalityRules(settings: BotSettings): string[] {
+  const rules: string[] = [];
+
+  const humor = settings.humor ?? BOT_SETTINGS_DEFAULTS.humor;
+  if (humor <= 20) {
+    rules.push('Юмор (0–20): без шуток — тепло, но серьёзно и по делу.');
+  } else if (humor <= 60) {
+    rules.push('Юмор (21–60): допустима лёгкая уместная шутка, если она к месту.');
+  } else {
+    rules.push(
+      'Юмор (61–100): шути активно и тепло. Никогда не шути над клиентом, его проблемой или деньгами; сомневаешься, уместно ли — не шути.',
+    );
+  }
+
+  const cunning = settings.cunning ?? BOT_SETTINGS_DEFAULTS.cunning;
+  if (cunning <= 20) {
+    rules.push('Хитрость (0–20): говори прямо, без приёмов убеждения.');
+  } else if (cunning <= 60) {
+    rules.push(
+      'Хитрость (21–60): можно мягкие приёмы — интрига, встречный вопрос, акцент на выгоде клиента.',
+    );
+  } else {
+    rules.push(
+      'Хитрость (61–100): веди к цели изобретательно — вместо «нет» предлагай альтернативу, создавай интригу и показывай выгоду. Честность неприкосновенна: никаких выдуманных скидок, дефицита и обещаний.',
+    );
+  }
+
+  const wit = settings.wit ?? BOT_SETTINGS_DEFAULTS.wit;
+  if (wit <= 20) {
+    rules.push('Остроумие (0–20): простые, ясные формулировки.');
+  } else if (wit <= 60) {
+    rules.push('Остроумие (21–60): живые формулировки, меткие фразы.');
+  } else {
+    rules.push(
+      'Остроумие (61–100): остроумно и неожиданно, можно игру слов — но всегда по делу и понятно клиенту.',
+    );
+  }
+
+  return rules;
+}
+
 /** Visitor memory (sql/0003): injected so the bot never re-asks known facts. */
 export type VisitorMemoryContext = {
   name: string | null;
@@ -152,6 +200,7 @@ export function buildSystemPrompt(
   blocks.push(aggressivenessRule(effectiveAggressiveness(settings)));
   const tone = toneRule(settings.tone ?? 50);
   if (tone) blocks.push(tone);
+  blocks.push(...personalityRules(settings));
   const memoryText = memory ? memoryBlock(memory) : null;
   if (memoryText) blocks.push(memoryText);
 

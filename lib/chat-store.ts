@@ -120,6 +120,8 @@ export type StoredMessage = {
   content: string;
   citations: unknown;
   createdAt: string;
+  /** Proactive touch (nudge), sql/0003; false on the legacy schema. */
+  isProactive: boolean;
 };
 
 export async function getConversationId(botId: string, sessionKey: string): Promise<string | null> {
@@ -139,21 +141,28 @@ export async function loadRecentMessages(
   limit: number,
 ): Promise<{ messages: StoredMessage[]; hasMore: boolean }> {
   const supabase = getSupabase();
-  // Fetch newest-first to enforce the window, then flip to chronological.
-  const { data, error } = await supabase
-    .from('messages')
-    .select('id, role, content, citations, created_at')
-    .eq('conversation_id', conversationId)
-    .order('id', { ascending: false })
-    .limit(limit + 1);
-  if (error) throw error;
+  const build = (columns: string) =>
+    supabase
+      .from('messages')
+      .select(columns)
+      .eq('conversation_id', conversationId)
+      .order('id', { ascending: false })
+      .limit(limit + 1);
 
-  const rows = (data ?? []) as Array<{
+  // Fetch newest-first to enforce the window, then flip to chronological.
+  let result = await build('id, role, content, citations, created_at, is_proactive');
+  if (result.error && isMissingColumnError(result.error)) {
+    result = await build('id, role, content, citations, created_at');
+  }
+  if (result.error) throw result.error;
+
+  const rows = (result.data ?? []) as unknown as Array<{
     id: number;
     role: string;
     content: string;
     citations: unknown;
     created_at: string;
+    is_proactive?: boolean;
   }>;
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
@@ -166,6 +175,7 @@ export async function loadRecentMessages(
       content: row.content,
       citations: row.citations,
       createdAt: row.created_at,
+      isProactive: row.is_proactive === true,
     })),
   };
 }

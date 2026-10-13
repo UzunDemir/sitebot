@@ -66,6 +66,12 @@ export type BotSettings = {
   aggressiveness?: number;
   /** Tone 0..100 (0 friendly ↔ 100 formal); 50 = neutral. */
   tone?: number;
+  /** Юмор 0..100: 0 — строго по делу, 100 — тепло и с шутками (без сарказма). */
+  humor?: number;
+  /** Хитрость 0..100: изобретательные приёмы убеждения; обман запрещён. */
+  cunning?: number;
+  /** Остроумие 0..100: неожиданные, меткие формулировки. */
+  wit?: number;
   /** Proactive touches: nudge engine + quiet hours (Ф3). */
   proactive?: BotProactiveSettings;
 };
@@ -80,6 +86,9 @@ export const BOT_SETTINGS_DEFAULTS = {
   salesPressure: 0 as 0 | 1 | 2,
   aggressiveness: 40,
   tone: 50,
+  humor: 30,
+  cunning: 40,
+  wit: 30,
   proactive: {
     enabled: true,
     nudges: { attempts: 2, firstDelaySec: 45, intervalSec: 300 },
@@ -133,6 +142,9 @@ export function parseBotSettings(input: unknown): BotSettings {
   }
   out.aggressiveness = intInRange(raw.aggressiveness, 0, 100);
   out.tone = intInRange(raw.tone, 0, 100);
+  out.humor = intInRange(raw.humor, 0, 100);
+  out.cunning = intInRange(raw.cunning, 0, 100);
+  out.wit = intInRange(raw.wit, 0, 100);
 
   if (raw.proactive && typeof raw.proactive === 'object' && !Array.isArray(raw.proactive)) {
     const p = raw.proactive as Record<string, unknown>;

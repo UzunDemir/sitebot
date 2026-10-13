@@ -92,11 +92,9 @@ export async function POST(req: Request): Promise<Response> {
     ) {
       return deny('closed');
     }
-    // Потерянный диалог не закрыт навсегда: разрешено одно реактивационное
-    // касание (стратег ставит lost осторожно; новое сообщение оживляет беседу).
+    // Потерянный диалог не глухо закрыт: реактивационное касание и вся серия
+    // (по лимиту «касаний подряд») продолжаются, пока клиент не ответил.
     const reactivation = conversation.outcome === 'lost' || conversation.stage === 'lost';
-    const maxAttempts = reactivation ? Math.min(1, proactive.attempts) : proactive.attempts;
-    if (conversation.nudgesSent >= maxAttempts) return deny('limit');
 
     const visitor = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
     if (visitor?.do_not_disturb) return deny('dnd');
@@ -120,7 +118,7 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    if (conversation.nudgesSent >= maxAttempts) return deny('limit');
+    if (conversation.nudgesSent >= proactive.attempts) return deny('limit');
 
     // --- timing: silence since the last message or nudge (0.9 tolerance)
     const { messages } = await loadRecentMessages(conversation.id, 12);
@@ -149,7 +147,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const text = await generateNudgeText({
       // Реактивация потерянной беседы звучит как «последнее предложение».
-      attempt: reactivation ? Math.max(attempt, 3) : attempt,
+      attempt: reactivation && attempt === 1 ? 3 : attempt,
       stage: conversation.stage,
       settings,
       visitor: {

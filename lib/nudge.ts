@@ -11,7 +11,7 @@ import { resolveModel } from './models';
 import type { VisitorContacts } from './visitors';
 import type { BotSettings } from './bot-settings';
 import { effectiveAggressiveness } from './bot-settings';
-import { goalLabelText } from './prompts';
+import { goalLabelText, personalityRules } from './prompts';
 
 /* ---------------------------------------------------------------- */
 /* Stop words: an explicit request to stop writing first            */
@@ -139,6 +139,7 @@ export async function generateNudgeText(context: NudgeContext): Promise<string> 
       nudgeRule(context.attempt),
       goal ? `Цель диалога: ${goal}.` : 'Цели нет — просто помоги продолжить диалог.',
       aggressivenessHint(effectiveAggressiveness(context.settings)),
+      ...personalityRules(context.settings),
       'Правила: не повторяй дословно свои прошлые сообщения; не выдумывай факты, скидки и обещания; не упрекай посетителя за молчание; не извиняйся дважды.',
       'Верни ТОЛЬКО текст сообщения.',
     ].join('\n');

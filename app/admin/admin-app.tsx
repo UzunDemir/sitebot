@@ -403,7 +403,7 @@ function BotSettings({
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=11" data-bot="${bot.public_key}" async></script>`;
+  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=12" data-bot="${bot.public_key}" async></script>`;
 
   function setThemeField<K extends keyof WidgetTheme>(key: K, value: WidgetTheme[K]) {
     setTheme((prev) => ({ ...prev, [key]: value }));
@@ -647,6 +647,47 @@ function BotSettings({
               className="w-full"
             />
             <span className="text-[10px] text-slate-400">0 — дружеский · 100 — официальный</span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Юмор: {settings.humor ?? BOT_SETTINGS_DEFAULTS.humor}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.humor ?? BOT_SETTINGS_DEFAULTS.humor}
+              onChange={(e) => setSetting('humor', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">0 — серьёзно · 100 — тепло и с шутками</span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Хитрость: {settings.cunning ?? BOT_SETTINGS_DEFAULTS.cunning}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.cunning ?? BOT_SETTINGS_DEFAULTS.cunning}
+              onChange={(e) => setSetting('cunning', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">
+              0 — прямо · 100 — изобретательно вести к цели (без обмана)
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Остроумие: {settings.wit ?? BOT_SETTINGS_DEFAULTS.wit}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.wit ?? BOT_SETTINGS_DEFAULTS.wit}
+              onChange={(e) => setSetting('wit', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">0 — просто · 100 — метко и неожиданно</span>
           </label>
           <label className="space-y-1 text-xs text-slate-500">
             Цель диалога

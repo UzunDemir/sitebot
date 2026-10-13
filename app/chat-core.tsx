@@ -64,6 +64,10 @@ function feedbackFromParts(parts: unknown[]): FeedbackInfo | null {
   return part?.data ?? null;
 }
 
+function proactiveFromParts(parts: unknown[]): boolean {
+  return parts.some((part) => (part as { type: string }).type === 'data-proactive');
+}
+
 type Palette = {
   accent: string;
   pageBg: string;
@@ -119,14 +123,17 @@ export function Chat({
   const [visitorKey, setVisitorKey] = useState('');
   const [visitor, setVisitor] = useState<{ name: string | null; returning: boolean } | null>(null);
   const [forget, setForget] = useState<0 | 1 | 2>(0);
-  const [liveNudge, setLiveNudge] = useState<string | null>(null);
+  const [liveNudges, setLiveNudges] = useState<string[]>([]);
   const [inFrame, setInFrame] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   // Dialog engine refs (survive effect re-runs; read at tick time).
   const nudgesRef = useRef<NudgesConfig | null>(null);
   const nudgesSentRef = useRef(0);
   const outcomeRef = useRef('in_progress');
-  const hideTimerRef = useRef<number | null>(null);
+  // Unread badge (embed mode): touches received while the window is collapsed.
+  const chatOpenRef = useRef(true);
+  const unreadNudgesRef = useRef(0);
+  const lastNudgeIdRef = useRef<number | null>(null);
 
   // Optional web font for the widget (link is scoped to this document).
   useEffect(() => {
@@ -304,6 +311,29 @@ export function Chat({
     };
   }, [sessionKey, visitorKey, bot.publicKey]);
 
+  // Embed mode: the loader reports when the chat window is collapsed or
+  // expanded, so touches received while collapsed count as unread (badge).
+  useEffect(() => {
+    function onParentMessage(event: MessageEvent) {
+      if (event.source !== window.parent) return;
+      const data = event.data as { type?: string } | null;
+      if (!data) return;
+      if (data.type === 'sitebot:chat-opened') {
+        chatOpenRef.current = true;
+        unreadNudgesRef.current = 0;
+        try {
+          window.parent.postMessage({ type: 'sitebot:unread', count: 0 }, '*');
+        } catch {
+          // ignore
+        }
+      } else if (data.type === 'sitebot:chat-closed') {
+        chatOpenRef.current = false;
+      }
+    }
+    window.addEventListener('message', onParentMessage);
+    return () => window.removeEventListener('message', onParentMessage);
+  }, []);
+
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, status]);
@@ -326,14 +356,6 @@ export function Chat({
     if (!sessionKey || !visitorKey) return;
     let cancelled = false;
     let timer: number | null = null;
-
-    const scheduleHide = (afterSeconds: number) => {
-      if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = window.setTimeout(() => {
-        setLiveNudge(null);
-        hideTimerRef.current = null;
-      }, Math.max(20_000, afterSeconds * 1000));
-    };
 
     const arm = (delayMs: number) => {
       if (timer !== null) window.clearTimeout(timer);
@@ -379,19 +401,33 @@ export function Chat({
           reason?: string;
           text?: string;
           nudgeNumber?: number;
+          messageId?: number | null;
           retryAfterMs?: number;
           nextAllowedAt?: string;
         } | null;
 
         if (payload?.allowed === true && typeof payload.text === 'string' && payload.text) {
+          const nudgeText = payload.text;
           const attempt = payload.nudgeNumber ?? nudgesSentRef.current + 1;
           nudgesSentRef.current = attempt;
-          setLiveNudge(payload.text);
-          scheduleHide(config.intervalSec);
+          const messageId = typeof payload.messageId === 'number' ? payload.messageId : null;
+          if (messageId === null || messageId !== lastNudgeIdRef.current) {
+            lastNudgeIdRef.current = messageId;
+            // Касание остаётся в ленте до ответа посетителя (как сообщение).
+            setLiveNudges((current) => [...current, nudgeText].slice(-6));
+          }
           try {
-            window.parent.postMessage({ type: 'sitebot:nudge', text: payload.text }, '*');
+            window.parent.postMessage({ type: 'sitebot:nudge', text: nudgeText }, '*');
           } catch {
             // not embedded — the in-feed bubble is enough
+          }
+          if (!chatOpenRef.current) {
+            unreadNudgesRef.current += 1;
+            try {
+              window.parent.postMessage({ type: 'sitebot:unread', count: unreadNudgesRef.current }, '*');
+            } catch {
+              // not embedded — no badge to update
+            }
           }
           const gapSec = attempt <= 0 ? config.firstDelaySec : config.intervalSec * Math.pow(2, attempt - 1);
           arm(gapSec * 1000);
@@ -451,12 +487,9 @@ export function Chat({
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    // An answer cancels the pending nudge (the server resets its counter too).
-    setLiveNudge(null);
-    if (hideTimerRef.current !== null) {
-      window.clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
+    // An answer consumes the pending touches (the server resets its counter too).
+    setLiveNudges([]);
+    lastNudgeIdRef.current = null;
     nudgesSentRef.current = 0;
     if (outcomeRef.current === 'lost') outcomeRef.current = 'in_progress';
     sendMessage({ text });
@@ -479,7 +512,9 @@ export function Chat({
     sessionStartedRef.current = false;
     setMessages([]);
     setVisitor(null);
-    setLiveNudge(null);
+    setLiveNudges([]);
+    lastNudgeIdRef.current = null;
+    unreadNudgesRef.current = 0;
     nudgesSentRef.current = 0;
     outcomeRef.current = 'in_progress';
     setSessionKey(fresh.sessionKey);
@@ -590,6 +625,7 @@ export function Chat({
           const text = messageText(message.parts);
           const sources = sourcesFromParts(message.parts);
           const feedback = feedbackFromParts(message.parts);
+          const proactive = proactiveFromParts(message.parts);
 
           if (message.role === 'user') {
             return (
@@ -612,6 +648,11 @@ export function Chat({
           return (
             <div key={message.id} className="flex justify-start">
               <div className="max-w-[85%] space-y-2">
+                {proactive && (
+                  <span className="block pl-1 text-[10px]" style={{ color: p.subtleText }}>
+                    Бот написал сам
+                  </span>
+                )}
                 <div
                   className="px-4 py-3 text-sm whitespace-pre-wrap"
                   style={{
@@ -648,34 +689,30 @@ export function Chat({
           );
         })}
 
-        {liveNudge && !busy && (
-          <div className="flex justify-start">
-            <div className="max-w-[85%] space-y-1">
-              <span className="block pl-1 text-[10px]" style={{ color: p.subtleText }}>
-                Бот написал сам
-              </span>
-              <div
-                className="px-4 py-3 text-sm whitespace-pre-wrap"
-                style={{
-                  backgroundColor: p.botBubbleBg,
-                  color: p.botBubbleText,
-                  borderRadius: bubbleRadius,
-                  borderBottomLeftRadius: 6,
-                  outline: `1px dashed ${p.border}`,
-                  outlineOffset: 2,
-                }}
-              >
-                {liveNudge}
+        {liveNudges.length > 0 && !busy && (
+          <div className="space-y-3">
+            {liveNudges.map((nudgeText, index) => (
+              <div key={`nudge-${index}`} className="flex justify-start">
+                <div className="max-w-[85%] space-y-1">
+                  <span className="block pl-1 text-[10px]" style={{ color: p.subtleText }}>
+                    Бот написал сам
+                  </span>
+                  <div
+                    className="px-4 py-3 text-sm whitespace-pre-wrap"
+                    style={{
+                      backgroundColor: p.botBubbleBg,
+                      color: p.botBubbleText,
+                      borderRadius: bubbleRadius,
+                      borderBottomLeftRadius: 6,
+                      outline: `1px dashed ${p.border}`,
+                      outlineOffset: 2,
+                    }}
+                  >
+                    {nudgeText}
+                  </div>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setLiveNudge(null)}
-                className="pl-1 text-[10px] opacity-60 transition-opacity hover:opacity-100"
-                style={{ color: p.subtleText }}
-              >
-                скрыть
-              </button>
-            </div>
+            ))}
           </div>
         )}
 

@@ -42,7 +42,7 @@ export default function ChatLoader() {
   if (!bots || bots.length === 0) return <LoadingCard />;
   const selected = bots.find((b) => b.publicKey === selectedKey) ?? bots[0];
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const embedSnippet = `<script src="${origin}/loader.js?v=11" data-bot="${selected.publicKey}" async></script>`;
+  const embedSnippet = `<script src="${origin}/loader.js?v=12" data-bot="${selected.publicKey}" async></script>`;
 
   return (
     <div>

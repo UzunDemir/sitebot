@@ -40,6 +40,7 @@ import {
   quietHoursEnd,
   sanitizeNudgeText,
 } from '../lib/nudge';
+import { personalityRules } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
@@ -330,6 +331,9 @@ function main(): void {
     const parsed = parseBotSettings({
       aggressiveness: 65,
       tone: 80,
+      humor: 70,
+      cunning: 250,
+      wit: 15,
       goal: 'messenger',
       proactive: {
         enabled: true,
@@ -342,6 +346,9 @@ function main(): void {
     if (
       parsed.aggressiveness === 65 &&
       parsed.tone === 80 &&
+      parsed.humor === 70 &&
+      parsed.cunning === 100 &&
+      parsed.wit === 15 &&
       parsed.goal === 'messenger' &&
       proactive.enabled === true &&
       proactive.attempts === 3 &&
@@ -361,6 +368,21 @@ function main(): void {
       console.error(
         `❌ настройки: ${JSON.stringify({ parsed, proactive, legacyAgg: effectiveAggressiveness(legacy) })}`,
       );
+      failures += 1;
+    }
+
+    // personality scales (юмор / хитрость / остроумие)
+    const personality = personalityRules({ humor: 90, cunning: 10, wit: 65 });
+    if (
+      personality.length === 3 &&
+      personalityRules({}).length === 3 &&
+      personality[0].includes('шути активно') &&
+      personality[1].includes('прямо') &&
+      personality[2].includes('остроумно')
+    ) {
+      console.log('  ✓ шкалы характера: юмор/хитрость/остроумие дают директивы');
+    } else {
+      console.error(`❌ personalityRules: ${JSON.stringify(personality)}`);
       failures += 1;
     }
   }

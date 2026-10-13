@@ -16,7 +16,8 @@
  *   3. the interval guard: an immediate second call is too_early
  *   4. an answer cancels the pending nudge (nudges_sent reset + nudge_answered)
  *   5. DND: do_not_disturb → denied with reason dnd
- *   6. lost dialog: one reactivation touch (then limit), a new message revives it
+ *   6. lost dialog: reactivation touch, the series continues (attempts/interval),
+ *      a new message revives it
  *   7. stop-words: canned reply, DND set, outcome stopped, stop_request event
  *   8. quiet hours: the window containing "now" denies the touch
  *
@@ -305,8 +306,8 @@ try {
   );
   const reactAgain = await nudge(sessionKey);
   check(
-    'lost-беседа: второй дожим уже закрыт (limit)',
-    reactAgain.json?.allowed === false && reactAgain.json?.reason === 'limit',
+    'lost-серия продолжается по интервалу (сразу — too_early)',
+    reactAgain.json?.allowed === false && reactAgain.json?.reason === 'too_early',
     JSON.stringify(reactAgain.json),
   );
 
