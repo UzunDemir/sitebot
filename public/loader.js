@@ -42,7 +42,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v13';
+  var LOADER_VERSION = 'v14';
   try {
     window.__sitebotLoader = LOADER_VERSION;
   } catch (e) {
@@ -253,35 +253,96 @@
     }
   }
 
-  function ensurePulseStyles() {
-    if (document.getElementById('sitebot-pulse-style')) return;
-    var style = document.createElement('style');
-    style.id = 'sitebot-pulse-style';
-    style.textContent =
-      '@keyframes sitebot-pulse{0%{transform:scale(1)}50%{transform:scale(1.08)}100%{transform:scale(1)}}' +
-      '@keyframes sitebot-badge-pulse{0%{transform:scale(1)}50%{transform:scale(1.2)}100%{transform:scale(1)}}';
-    document.head.appendChild(style);
+  /** Attention while unread > 0: the launcher pulses and a red ring radiates.
+   *  Web Animations API: независимо от системных настроек движения, не зависит
+   *  от <style>-инъекций (CSP) и переживает сбросы cssText. */
+  var pulseAnims = [];
+  var ringEl = null;
+
+  function positionRing() {
+    if (!ringEl) return;
+    var size = effSize();
+    var pos = currentPos();
+    ringEl.style.left = pos.left + 'px';
+    ringEl.style.top = pos.top + 'px';
+    ringEl.style.width = size + 'px';
+    ringEl.style.height = size + 'px';
   }
 
-  /** Attention: the launcher (and badge) pulse while unread > 0. */
-  function applyAttention() {
-    var reduce = false;
-    try {
-      reduce =
-        typeof window.matchMedia === 'function' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    } catch (e) {
-      reduce = false;
+  function startAttention() {
+    if (typeof launcher.animate !== 'function') return;
+    if (pulseAnims.length === 0) {
+      try {
+        pulseAnims.push(
+          launcher.animate(
+            [
+              { transform: 'scale(1)' },
+              { transform: 'scale(1.12)' },
+              { transform: 'scale(1)' },
+            ],
+            { duration: 1500, easing: 'ease-in-out', iterations: Infinity },
+          ),
+        );
+      } catch (e) {
+        // ignore
+      }
+      if (badgeEl) {
+        try {
+          pulseAnims.push(
+            badgeEl.animate(
+              [
+                { transform: 'scale(1)' },
+                { transform: 'scale(1.25)' },
+                { transform: 'scale(1)' },
+              ],
+              { duration: 1500, easing: 'ease-in-out', iterations: Infinity },
+            ),
+          );
+        } catch (e) {
+          // ignore
+        }
+      }
     }
-    var animate = unreadCount > 0 && !reduce;
-    try {
-      launcher.style.animation = animate ? 'sitebot-pulse 1.6s ease-in-out infinite' : 'none';
-    } catch (e) {
-      // ignore
+    if (!ringEl) {
+      ringEl = document.createElement('div');
+      ringEl.setAttribute('aria-hidden', 'true');
+      ringEl.style.cssText = [
+        'position:fixed',
+        'box-sizing:border-box',
+        'border:3px solid rgba(239,68,68,0.85)',
+        'border-radius:50%',
+        'pointer-events:none',
+        'z-index:' + (parseInt(Z, 10) - 1),
+      ].join(';');
+      document.body.appendChild(ringEl);
+      positionRing();
+      try {
+        pulseAnims.push(
+          ringEl.animate(
+            [
+              { transform: 'scale(1)', opacity: 0.9 },
+              { transform: 'scale(1.6)', opacity: 0 },
+            ],
+            { duration: 1500, easing: 'ease-out', iterations: Infinity },
+          ),
+        );
+      } catch (e) {
+        // ignore
+      }
     }
-    if (badgeEl) {
-      badgeEl.style.animation = animate ? 'sitebot-badge-pulse 1.6s ease-in-out infinite' : 'none';
+  }
+
+  function stopAttention() {
+    for (var i = 0; i < pulseAnims.length; i++) {
+      try {
+        pulseAnims[i].cancel();
+      } catch (e) {
+        // ignore
+      }
     }
+    pulseAnims = [];
+    if (ringEl && ringEl.parentNode) ringEl.parentNode.removeChild(ringEl);
+    ringEl = null;
   }
 
   function positionBadge() {
@@ -298,10 +359,9 @@
     if (unreadCount <= 0) {
       if (badgeEl && badgeEl.parentNode) badgeEl.parentNode.removeChild(badgeEl);
       badgeEl = null;
-      applyAttention();
+      stopAttention();
       return;
     }
-    ensurePulseStyles();
     if (!badgeEl) {
       badgeEl = document.createElement('div');
       badgeEl.setAttribute('aria-hidden', 'true');
@@ -327,7 +387,7 @@
     }
     badgeEl.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
     positionBadge();
-    applyAttention();
+    startAttention();
   }
 
   function applyLauncher() {
@@ -361,7 +421,7 @@
     renderLauncherIcon();
     applyLabel();
     positionBadge();
-    applyAttention();
+    positionRing();
     if (teaser) positionTeaser();
   }
 
@@ -416,6 +476,7 @@
       sessionPos = np;
       launcher.style.left = np.left + 'px';
       launcher.style.top = np.top + 'px';
+      positionRing();
       if (labelEl) labelEl.style.visibility = 'hidden';
       if (teaser) teaser.style.display = 'none';
       if (e.cancelable) e.preventDefault();
