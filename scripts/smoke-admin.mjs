@@ -87,6 +87,19 @@ const check = (label, ok, extra = '') => {
   if (!ok) failures += 1;
 };
 
+/** Text may be split across stream deltas — join the fields before matching. */
+function extractStreamField(raw, field) {
+  const pattern = new RegExp(`"${field}":"((?:[^"\\\\]|\\\\.)*)"`, 'g');
+  return [...raw.matchAll(pattern)].map((m) => m[1]);
+}
+
+function answerOf(raw) {
+  return [...extractStreamField(raw, 'text'), ...extractStreamField(raw, 'delta')]
+    .join('')
+    .replace(/\\n/g, '\n')
+    .replace(/\\"/g, '"');
+}
+
 async function waitForServer() {
   for (let attempt = 1; attempt <= 40; attempt += 1) {
     await sleep(1000);
@@ -210,7 +223,12 @@ try {
     }),
   });
   const raw = await chatRes.text();
-  check('ответ ссылается на новый документ', raw.includes('лавандов') || raw.includes(STAMP));
+  const answer = answerOf(raw);
+  check(
+    'ответ ссылается на новый документ',
+    answer.toLowerCase().includes('лавандов') || answer.includes(STAMP),
+    answer ? '' : 'текст не извлёкся из потока',
+  );
   check('/api/chat → 200', chatRes.ok, `HTTP ${chatRes.status}`);
 
   // 6) delete

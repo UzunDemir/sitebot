@@ -18,6 +18,10 @@ export function sessionStorageKey(publicKey: string): string {
   return `sitebot_session_${publicKey}`;
 }
 
+export function visitorStorageKey(publicKey: string): string {
+  return `sitebot_visitor_${publicKey}`;
+}
+
 /** Session id with fallbacks: crypto.randomUUID is missing in insecure
  *  contexts (an https iframe inside an http page) and in old WebViews —
  *  a session key needs uniqueness, not cryptographic randomness. */
@@ -65,4 +69,35 @@ export function readBrowserSessionKey(publicKey: string): string {
   } catch {
     return makeSessionId();
   }
+}
+
+/** Read (or create) the stable visitor key for one bot (sql/0003 card). */
+export function readVisitorKey(storage: SessionStorage, publicKey: string): string {
+  const storageKey = visitorStorageKey(publicKey);
+  const existing = storage.getItem(storageKey);
+  if (existing) return existing;
+  const key = makeSessionId();
+  storage.setItem(storageKey, key);
+  return key;
+}
+
+export function readBrowserVisitorKey(publicKey: string): string {
+  try {
+    return readVisitorKey(window.localStorage, publicKey);
+  } catch {
+    return makeSessionId();
+  }
+}
+
+/** «Забыть меня»: a fresh identity for session and visitor (best effort). */
+export function resetBrowserIdentity(publicKey: string): { sessionKey: string; visitorKey: string } {
+  const sessionKey = makeSessionId();
+  const visitorKey = makeSessionId();
+  try {
+    window.localStorage.setItem(sessionStorageKey(publicKey), sessionKey);
+    window.localStorage.setItem(visitorStorageKey(publicKey), visitorKey);
+  } catch {
+    // storage unavailable — the fresh pair lives for this page only
+  }
+  return { sessionKey, visitorKey };
 }

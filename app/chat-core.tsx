@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
-import { readBrowserSessionKey } from '@/lib/session-key';
+import { readBrowserSessionKey, readBrowserVisitorKey, resetBrowserIdentity } from '@/lib/session-key';
 
 export type ChatBotInfo = {
   publicKey: string;
@@ -107,6 +107,9 @@ export function Chat({
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
   const [sessionKey, setSessionKey] = useState('');
+  const [visitorKey, setVisitorKey] = useState('');
+  const [visitor, setVisitor] = useState<{ name: string | null; returning: boolean } | null>(null);
+  const [forget, setForget] = useState<0 | 1 | 2>(0);
   const [inFrame, setInFrame] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -123,10 +126,11 @@ export function Chat({
   }, [t.fontUrl]);
 
   useEffect(() => {
-    // Per-bot key (sitebot_session_<pk>): two widgets on one device keep
-    // separate dialogs. The legacy shared key is adopted once so existing
-    // visitors continue their conversation after this upgrade.
+    // Per-bot keys: session (dialog) and visitor (card, sql/0003).
+    // The legacy shared session key is adopted once so existing visitors
+    // continue their conversation after this upgrade.
     setSessionKey(readBrowserSessionKey(bot.publicKey));
+    setVisitorKey(readBrowserVisitorKey(bot.publicKey));
   }, [bot.publicKey]);
 
   useEffect(() => {
@@ -172,29 +176,41 @@ export function Chat({
     () =>
       new DefaultChatTransport({
         api: '/api/chat',
-        body: { botKey: bot.publicKey, sessionKey },
+        body: { botKey: bot.publicKey, sessionKey, visitorKey },
       }),
-    [bot.publicKey, sessionKey],
+    [bot.publicKey, sessionKey, visitorKey],
   );
 
   const { messages, sendMessage, setMessages, status, error } = useChat({ transport });
 
   // Dialog memory: restore the stored conversation for this bot + session so
   // a reload (or a return visit) continues the dialog instead of starting
-  // over. Best effort: a failed fetch never blocks the chat, and a dialog
-  // already on screen is never overwritten.
+  // over. The visitor card (sql/0003) supplies the welcome-back name.
+  // Best effort: a failed fetch never blocks the chat, and a dialog already
+  // on screen is never overwritten.
   useEffect(() => {
-    if (!sessionKey) return;
+    if (!sessionKey || !visitorKey) return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(
-          `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}`,
+          `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}`,
         );
         if (!res.ok) return;
-        const payload = (await res.json().catch(() => null)) as { messages?: unknown[] } | null;
+        const payload = (await res.json().catch(() => null)) as {
+          messages?: unknown[];
+          visitor?: { name?: unknown; returning?: unknown } | null;
+        } | null;
+        if (cancelled) return;
+        const info = payload?.visitor;
+        if (info && info.returning === true) {
+          setVisitor({
+            name: typeof info.name === 'string' && info.name.trim() ? info.name.trim() : null,
+            returning: true,
+          });
+        }
         const restored = Array.isArray(payload?.messages) ? (payload.messages as UIMessage[]) : [];
-        if (cancelled || restored.length === 0) return;
+        if (restored.length === 0) return;
         setMessages((current) => (current.length > 0 ? current : restored));
       } catch {
         // history is a bonus; ignore failures
@@ -203,7 +219,53 @@ export function Chat({
     return () => {
       cancelled = true;
     };
-  }, [sessionKey, bot.publicKey, setMessages]);
+  }, [sessionKey, visitorKey, bot.publicKey, setMessages]);
+
+  // Funnel analytics (sql/0003): one session_start per page, then
+  // page_hidden when the visitor leaves. Fire-and-forget — never blocks.
+  const sessionStartedRef = useRef(false);
+  useEffect(() => {
+    if (!sessionKey || !visitorKey || sessionStartedRef.current) return;
+    sessionStartedRef.current = true;
+    void fetch('/api/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ botKey: bot.publicKey, sessionKey, visitorKey, type: 'session_start' }),
+    }).catch(() => {
+      // analytics only; ignore
+    });
+  }, [sessionKey, visitorKey, bot.publicKey]);
+
+  useEffect(() => {
+    if (!sessionKey || !visitorKey) return;
+    const payload = JSON.stringify({
+      botKey: bot.publicKey,
+      sessionKey,
+      visitorKey,
+      type: 'page_hidden',
+    });
+    function sendHidden() {
+      try {
+        void fetch('/api/events', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: payload,
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+    function onVisibility() {
+      if (document.visibilityState === 'hidden') sendHidden();
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', sendHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', sendHidden);
+    };
+  }, [sessionKey, visitorKey, bot.publicKey]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -231,7 +293,34 @@ export function Chat({
     setInput('');
   }
 
+  // Two-step «забыть меня»: server-side erase, then a fresh local identity.
+  async function confirmForget() {
+    if (!visitorKey) return;
+    try {
+      await fetch('/api/chat/forget', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ botKey: bot.publicKey, visitorKey, sessionKey }),
+      });
+    } catch {
+      // even if the request fails, wipe the local identity below
+    }
+    const fresh = resetBrowserIdentity(bot.publicKey);
+    sessionStartedRef.current = false;
+    setMessages([]);
+    setVisitor(null);
+    setSessionKey(fresh.sessionKey);
+    setVisitorKey(fresh.visitorKey);
+    setForget(2);
+    window.setTimeout(() => setForget(0), 4000);
+  }
+
   const bubbleRadius = p.radius;
+  const greetingText = visitor?.returning
+    ? visitor.name
+      ? `С возвращением, ${visitor.name}!`
+      : 'С возвращением! Продолжим с того места, где остановились.'
+    : bot.greeting ?? 'Здравствуйте! Чем могу помочь?';
 
   return (
     <div
@@ -320,7 +409,7 @@ export function Chat({
               borderBottomLeftRadius: 6,
             }}
           >
-            {bot.greeting ?? 'Здравствуйте! Чем могу помочь?'}
+            {greetingText}
           </div>
         </div>
 
@@ -414,14 +503,15 @@ export function Chat({
 
       <form
         onSubmit={submit}
-        className="flex gap-2 border-t px-4 py-3"
+        className="border-t px-4 py-3"
         style={{
           borderColor: p.border,
           backgroundColor: p.headerBg,
           ...(compact ? { paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' } : {}),
         }}
       >
-        <input
+        <div className="flex gap-2">
+          <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Спросите что-нибудь…"
@@ -442,6 +532,37 @@ export function Chat({
         >
           {busy ? '…' : 'Отправить'}
         </button>
+        </div>
+        <div
+          className="mt-1.5 flex min-h-[16px] items-center justify-end gap-2 text-[10px]"
+          style={{ color: p.subtleText }}
+        >
+          {forget === 0 && (
+            <button
+              type="button"
+              onClick={() => setForget(1)}
+              className="opacity-60 transition-opacity hover:opacity-100"
+            >
+              Забыть меня
+            </button>
+          )}
+          {forget === 1 && (
+            <>
+              <span>Удалить карточку и всю переписку?</span>
+              <button
+                type="button"
+                onClick={() => void confirmForget()}
+                className="font-medium text-red-600 underline"
+              >
+                Да, удалить
+              </button>
+              <button type="button" onClick={() => setForget(0)} className="opacity-60 hover:opacity-100">
+                Отмена
+              </button>
+            </>
+          )}
+          {forget === 2 && <span>Данные удалены.</span>}
+        </div>
       </form>
     </div>
   );

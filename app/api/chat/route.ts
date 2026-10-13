@@ -15,12 +15,15 @@ import {
   toUIMessageStream,
   type UIMessage,
 } from 'ai';
+import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 import { resolveModel } from '@/lib/models';
 import { hybridSearch } from '@/lib/retrieval';
 import { buildSystemPrompt } from '@/lib/prompts';
 import { ensureConversation, saveUserMessage, saveAssistantMessage } from '@/lib/chat-store';
+import { attachConversationToVisitor, ensureVisitor } from '@/lib/visitors';
+import { refreshVisitorMemory } from '@/lib/visitor-memory';
 import { estimateCostUsd } from '@/lib/pricing';
 import { BOT_SETTINGS_DEFAULTS, isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
 
@@ -33,6 +36,7 @@ type ChatRequestBody = {
   messages?: UIMessage[];
   botKey?: string;
   sessionKey?: string;
+  visitorKey?: string;
 };
 
 type BotRow = {
@@ -121,6 +125,7 @@ export async function POST(req: Request): Promise<Response> {
     const body = (await req.json()) as ChatRequestBody;
     const messages = body.messages ?? [];
     const sessionKey = body.sessionKey?.trim() ?? '';
+    const visitorKey = body.visitorKey?.trim() ?? '';
     const startedAt = Date.now();
 
     // --- resolve bot
@@ -172,6 +177,14 @@ export async function POST(req: Request): Promise<Response> {
       } catch (err) {
         console.warn('[chat] failed to persist user message:', err);
       }
+    }
+
+    // --- visitor card (sql/0003): link the dialog, refresh memory after
+    // the response. Best effort — the chat works without the migration.
+    let visitorId: string | null = null;
+    if (visitorKey && conversationId) {
+      visitorId = await ensureVisitor(bot.id, visitorKey);
+      if (visitorId) await attachConversationToVisitor(conversationId, visitorId);
     }
 
     // --- generation
@@ -249,6 +262,19 @@ export async function POST(req: Request): Promise<Response> {
         }
       },
     });
+
+    // Dialog memory (best effort, after the response is sent): extract
+    // facts from the finished exchange and update the visitor card.
+    const memoryVisitorId = visitorId;
+    if (memoryVisitorId && conversationId) {
+      after(async () => {
+        try {
+          await refreshVisitorMemory(memoryVisitorId, conversationId);
+        } catch (err) {
+          console.warn('[chat] visitor memory refresh failed:', err);
+        }
+      });
+    }
 
     return createUIMessageStreamResponse({ stream });
   } catch (err) {

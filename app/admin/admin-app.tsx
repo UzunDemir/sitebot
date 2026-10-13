@@ -8,6 +8,7 @@ import {
   type BotGoal,
   type BotSettings,
 } from '@/lib/bot-settings';
+import VisitorsPanel from './visitors-panel';
 
 const CHANNEL_CARDS: Array<{ name: string; status: string; note: string }> = [
   { name: 'Telegram', status: 'В разработке', note: 'Бот в мессенджере — первый канал для исходящих сообщений (в т.ч. поздравлений).' },
@@ -212,6 +213,7 @@ export default function AdminApp() {
             docs={docs}
             onChanged={() => void loadDocs(selectedBot.id)}
           />
+          <VisitorsPanel key={`visitors-${selectedBot.id}`} botId={selectedBot.id} />
         </>
       )}
     </div>

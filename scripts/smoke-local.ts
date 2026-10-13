@@ -12,7 +12,15 @@
 import { chunkDocument } from '../lib/chunker';
 import { toVectorLiteral } from '../lib/embeddings';
 import { getSupabase } from '../lib/supabase';
-import { LEGACY_SESSION_KEY, makeSessionId, readSessionKey, sessionStorageKey } from '../lib/session-key';
+import {
+  LEGACY_SESSION_KEY,
+  makeSessionId,
+  readSessionKey,
+  readVisitorKey,
+  sessionStorageKey,
+  visitorStorageKey,
+} from '../lib/session-key';
+import { factsAreEmpty, mergeVisitorFacts, sanitizeVisitorFacts } from '../lib/visitor-memory';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
@@ -123,6 +131,92 @@ function main(): void {
       console.log('  ✓ генератор id: 3 уникальных значения');
     } else {
       console.error('❌ генератор id вернул дубликаты');
+      failures += 1;
+    }
+  }
+
+  // --- 5. visitor card: keys + pure fact helpers
+  console.log('── visitor card ──');
+  {
+    // visitor key: stable per bot, isolated between bots
+    const store = fakeStorage();
+    const vk1 = readVisitorKey(store, 'pk_a');
+    const vk2 = readVisitorKey(store, 'pk_a');
+    const vkOther = readVisitorKey(store, 'pk_b');
+    if (vk1 && vk1 === vk2 && vk1 !== vkOther && store.getItem(visitorStorageKey('pk_a')) === vk1) {
+      console.log('  ✓ visitor-ключ стабилен и изолирован по ботам');
+    } else {
+      console.error(`❌ visitor-ключ: ${vk1} / ${vk2} / ${vkOther}`);
+      failures += 1;
+    }
+
+    // sanitize: trims values, caps lists, drops junk keys and types
+    const sanitized = sanitizeVisitorFacts({
+      name: '  Игорь  ',
+      contacts: { phone: ' +7 900 000-00-00 ', spam: 'x', telegram: 42, email: 'a@b.ru' },
+      interests: ['доставка', 'доставка', '', 7, 'оплата', 'гарантия', 'бонусы'],
+      note: '  Просил перезвонить в четверг  ',
+    });
+    const contacts = sanitized.contacts ?? {};
+    if (
+      sanitized.name === 'Игорь' &&
+      contacts.phone === '+7 900 000-00-00' &&
+      contacts.email === 'a@b.ru' &&
+      !('spam' in contacts) &&
+      !('telegram' in contacts) &&
+      JSON.stringify(sanitized.interests) === JSON.stringify(['доставка', 'оплата', 'гарантия']) &&
+      sanitized.note === 'Просил перезвонить в четверг'
+    ) {
+      console.log('  ✓ sanitizeVisitorFacts: мусор отброшен, значения нормализованы');
+    } else {
+      console.error(`❌ sanitizeVisitorFacts: ${JSON.stringify(sanitized)}`);
+      failures += 1;
+    }
+
+    // junk input → empty facts
+    if (factsAreEmpty(sanitizeVisitorFacts('мусор')) && factsAreEmpty(sanitizeVisitorFacts(null))) {
+      console.log('  ✓ мусорный вход → пустые факты');
+    } else {
+      console.error('❌ мусорный вход не отфильтрован');
+      failures += 1;
+    }
+
+    // merge: existing (owner) values win, interests union, digest append-once
+    const merged = mergeVisitorFacts(
+      {
+        name: 'Мария',
+        contacts: { phone: '+7 111' },
+        meta: { interests: ['обувь'] },
+        memory_digest: 'Старый факт',
+      },
+      {
+        name: 'Игорь',
+        contacts: { phone: '+7 999', email: 'a@b.ru' },
+        interests: ['доставка'],
+        note: 'Новый факт',
+      },
+    );
+    if (
+      merged.name === 'Мария' &&
+      merged.contacts.phone === '+7 111' &&
+      merged.contacts.email === 'a@b.ru' &&
+      JSON.stringify(merged.meta.interests) === JSON.stringify(['обувь', 'доставка']) &&
+      merged.memory_digest === 'Старый факт\nНовый факт'
+    ) {
+      console.log('  ✓ mergeVisitorFacts: имя/контакты владельца не перезаписаны');
+    } else {
+      console.error(`❌ mergeVisitorFacts: ${JSON.stringify(merged)}`);
+      failures += 1;
+    }
+
+    const mergedAgain = mergeVisitorFacts(
+      { name: null, contacts: {}, meta: {}, memory_digest: 'Новый факт' },
+      { note: 'Новый факт' },
+    );
+    if (mergedAgain.memory_digest === 'Новый факт') {
+      console.log('  ✓ повторный факт не дублируется в дайджесте');
+    } else {
+      console.error(`❌ дайджест продублирован: ${mergedAgain.memory_digest}`);
       failures += 1;
     }
   }

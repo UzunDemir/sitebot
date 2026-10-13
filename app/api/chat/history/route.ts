@@ -23,6 +23,7 @@ import {
   loadRecentMessages,
   type StoredMessage,
 } from '@/lib/chat-store';
+import { loadVisitorByKey } from '@/lib/visitors';
 
 const HISTORY_DEFAULT_LIMIT = 100;
 const HISTORY_MAX_LIMIT = 200;
@@ -92,6 +93,7 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const botKey = url.searchParams.get('botKey')?.trim() ?? '';
     const sessionKey = url.searchParams.get('sessionKey')?.trim() ?? '';
+    const visitorKey = url.searchParams.get('visitorKey')?.trim() ?? '';
     const limitRaw = Number(url.searchParams.get('limit') ?? HISTORY_DEFAULT_LIMIT);
     const limit = Number.isFinite(limitRaw)
       ? Math.min(HISTORY_MAX_LIMIT, Math.max(1, Math.round(limitRaw)))
@@ -123,7 +125,13 @@ export async function GET(req: Request): Promise<Response> {
 
     const conversationId = await getConversationId(bot.id, sessionKey);
     if (!conversationId) {
-      return Response.json({ conversationId: null, messages: [], hasMore: false });
+      const visitorRow = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
+      return Response.json({
+        conversationId: null,
+        messages: [],
+        hasMore: false,
+        visitor: visitorRow ? { name: visitorRow.name, returning: false } : null,
+      });
     }
 
     const { messages, hasMore } = await loadRecentMessages(conversationId, limit);
@@ -132,9 +140,17 @@ export async function GET(req: Request): Promise<Response> {
     );
     const showSources = parseBotSettings(bot.settings).showSources !== false;
 
+    // Welcome-back hint for the widget: who is returning (visitor card)
+    // and whether a stored dialog exists («с возвращением» bubble).
+    const visitorRow = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
+    const returning = messages.length > 0;
+    const visitor =
+      visitorRow || returning ? { name: visitorRow?.name ?? null, returning } : null;
+
     return Response.json({
       conversationId,
       hasMore,
+      visitor,
       messages: messages.map((message) =>
         toUIMessage(message, ratings, conversationId, showSources),
       ),
