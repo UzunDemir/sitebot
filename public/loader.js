@@ -42,7 +42,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v12';
+  var LOADER_VERSION = 'v13';
   try {
     window.__sitebotLoader = LOADER_VERSION;
   } catch (e) {
@@ -75,6 +75,7 @@
   var teaser = null;
   var labelEl = null;
   var badgeEl = null;
+  var unreadCount = 0;
 
   function clamp(v, min, max) {
     return Math.min(max, Math.max(min, v));
@@ -252,6 +253,37 @@
     }
   }
 
+  function ensurePulseStyles() {
+    if (document.getElementById('sitebot-pulse-style')) return;
+    var style = document.createElement('style');
+    style.id = 'sitebot-pulse-style';
+    style.textContent =
+      '@keyframes sitebot-pulse{0%{transform:scale(1)}50%{transform:scale(1.08)}100%{transform:scale(1)}}' +
+      '@keyframes sitebot-badge-pulse{0%{transform:scale(1)}50%{transform:scale(1.2)}100%{transform:scale(1)}}';
+    document.head.appendChild(style);
+  }
+
+  /** Attention: the launcher (and badge) pulse while unread > 0. */
+  function applyAttention() {
+    var reduce = false;
+    try {
+      reduce =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {
+      reduce = false;
+    }
+    var animate = unreadCount > 0 && !reduce;
+    try {
+      launcher.style.animation = animate ? 'sitebot-pulse 1.6s ease-in-out infinite' : 'none';
+    } catch (e) {
+      // ignore
+    }
+    if (badgeEl) {
+      badgeEl.style.animation = animate ? 'sitebot-badge-pulse 1.6s ease-in-out infinite' : 'none';
+    }
+  }
+
   function positionBadge() {
     if (!badgeEl) return;
     var size = effSize();
@@ -262,12 +294,14 @@
 
   /** Unread counter on the launcher (touches received while collapsed). */
   function updateBadge(count) {
-    var value = typeof count === 'number' && count > 0 ? Math.floor(count) : 0;
-    if (value <= 0) {
+    unreadCount = typeof count === 'number' && count > 0 ? Math.floor(count) : 0;
+    if (unreadCount <= 0) {
       if (badgeEl && badgeEl.parentNode) badgeEl.parentNode.removeChild(badgeEl);
       badgeEl = null;
+      applyAttention();
       return;
     }
+    ensurePulseStyles();
     if (!badgeEl) {
       badgeEl = document.createElement('div');
       badgeEl.setAttribute('aria-hidden', 'true');
@@ -291,8 +325,9 @@
       ].join(';');
       document.body.appendChild(badgeEl);
     }
-    badgeEl.textContent = value > 9 ? '9+' : String(value);
+    badgeEl.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
     positionBadge();
+    applyAttention();
   }
 
   function applyLauncher() {
@@ -326,6 +361,7 @@
     renderLauncherIcon();
     applyLabel();
     positionBadge();
+    applyAttention();
     if (teaser) positionTeaser();
   }
 
@@ -629,19 +665,11 @@
     }
   }
 
-  function showTeaser(overrideText) {
-    if (state.opened || teaser) return;
-    var text = str(overrideText);
-    if (!text) {
-      // Automatic teaser: respects the bot's proactive settings and the
-      // visitor's dismissal. A nudge (overrideText) skips both — it comes
-      // from the server, which has already applied its own guards (DND,
-      // quiet hours, attempt limit) for this visitor.
-      if (state.teaserDismissed) return;
-      var proactive = theme.proactive;
-      if (!proactive || proactive.enabled !== true) return;
-      text = str(proactive.text) || 'Здравствуйте! Подскажу что-нибудь?';
-    }
+  function showTeaser() {
+    if (state.opened || state.teaserDismissed || teaser) return;
+    var proactive = theme.proactive;
+    if (!proactive || proactive.enabled !== true) return;
+    var text = str(proactive.text) || 'Здравствуйте! Подскажу что-нибудь?';
     teaser = document.createElement('div');
     teaser.style.cssText = [
       'position:fixed',
@@ -697,14 +725,8 @@
       if (!data) return;
       if (data.type === 'sitebot:minimize' && state.opened) {
         toggle();
-      } else if (data.type === 'sitebot:nudge' && typeof data.text === 'string' && data.text) {
-        // The chat window is closed and the bot decided to follow up:
-        // surface the touch as a teaser bubble next to the launcher.
-        if (!state.opened) {
-          hideTeaser(false);
-          showTeaser(data.text);
-        }
       } else if (data.type === 'sitebot:unread') {
+        // Only the counter + pulse — bot touches never pop a text bubble.
         updateBadge(typeof data.count === 'number' ? data.count : 0);
       } else if (data.type === 'sitebot:move') {
         moveWindow(data.dx, data.dy);

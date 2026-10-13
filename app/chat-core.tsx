@@ -487,8 +487,20 @@ export function Chat({
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    // An answer consumes the pending touches (the server resets its counter too).
-    setLiveNudges([]);
+    // Касания остаются в ленте: перед ответом переносим их в сообщения
+    // (в истории они придут из БД с тем же текстом и пометкой).
+    if (liveNudges.length > 0) {
+      const merged: UIMessage[] = liveNudges.map((nudgeText, index) => ({
+        id: `nudge-local-${lastNudgeIdRef.current ?? 'x'}-${index}`,
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: nudgeText },
+          { type: 'data-proactive', id: 'proactive', data: {} },
+        ],
+      }));
+      setMessages((current) => [...current, ...merged]);
+      setLiveNudges([]);
+    }
     lastNudgeIdRef.current = null;
     nudgesSentRef.current = 0;
     if (outcomeRef.current === 'lost') outcomeRef.current = 'in_progress';

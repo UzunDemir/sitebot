@@ -403,7 +403,7 @@ function BotSettings({
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=12" data-bot="${bot.public_key}" async></script>`;
+  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=13" data-bot="${bot.public_key}" async></script>`;
 
   function setThemeField<K extends keyof WidgetTheme>(key: K, value: WidgetTheme[K]) {
     setTheme((prev) => ({ ...prev, [key]: value }));
