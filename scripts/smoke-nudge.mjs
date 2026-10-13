@@ -16,8 +16,9 @@
  *   3. the interval guard: an immediate second call is too_early
  *   4. an answer cancels the pending nudge (nudges_sent reset + nudge_answered)
  *   5. DND: do_not_disturb → denied with reason dnd
- *   6. stop-words: canned reply, DND set, outcome stopped, stop_request event
- *   7. quiet hours: the window containing "now" denies the touch
+ *   6. lost dialog: one reactivation touch (then limit), a new message revives it
+ *   7. stop-words: canned reply, DND set, outcome stopped, stop_request event
+ *   8. quiet hours: the window containing "now" denies the touch
  *
  * Usage: npm run smoke:nudge
  */
@@ -291,6 +292,32 @@ try {
   const dnd = await nudge(sessionKey);
   check('do_not_disturb → отказ dnd', dnd.json?.allowed === false && dnd.json?.reason === 'dnd', JSON.stringify(dnd.json));
   await supabase.from('visitors').update({ do_not_disturb: false }).eq('id', visitorId);
+
+  // --- 5b) lost dialog: one reactivation touch + revival on a new message
+  console.log('── 5б. потерянный диалог: реактивация и оживление ──');
+  await supabase.from('conversations').update({ outcome: 'lost' }).eq('id', conv.id);
+  await sleep((FIRST_DELAY_SEC + 2) * 1000);
+  const react = await nudge(sessionKey);
+  check(
+    'lost-беседа: одно реактивационное касание разрешено',
+    react.json?.allowed === true && react.json?.nudgeNumber === 1,
+    typeof react.json?.text === 'string' ? react.json.text.slice(0, 100) : JSON.stringify(react.json),
+  );
+  const reactAgain = await nudge(sessionKey);
+  check(
+    'lost-беседа: второй дожим уже закрыт (limit)',
+    reactAgain.json?.allowed === false && reactAgain.json?.reason === 'limit',
+    JSON.stringify(reactAgain.json),
+  );
+
+  const revive = await chat(sessionKey, dialog, 'Ладно, давайте продолжим: что вы посоветуете?');
+  check('ход 2б: ответ получен', revive.ok, `HTTP ${revive.status}`);
+  const convRevived = await conversationOf(sessionKey);
+  check(
+    'новое сообщение оживило беседу (outcome → in_progress)',
+    convRevived?.outcome === 'in_progress',
+    convRevived?.outcome ?? '—',
+  );
 
   // --- 6) stop-words: canned reply + DND + stopped outcome
   console.log('── 5. стоп-слова ──');

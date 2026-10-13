@@ -210,6 +210,13 @@ export async function POST(req: Request): Promise<Response> {
       await updateConversationFields(conversationId, { nudges_sent: 0 });
     }
 
+    // --- потерянный диалог оживает: посетитель снова пишет — стратегия и
+    // дожим продолжаются (глухие стопы — цель достигнута / стоп-слово).
+    if (conversationId && conversationMeta && conversationMeta.outcome === 'lost') {
+      await updateConversationFields(conversationId, { outcome: 'in_progress' });
+      await recordEvent({ botId: bot.id, visitorId, conversationId, type: 'dialog_resumed' });
+    }
+
     // --- стоп-слова: DND навсегда, вежливый ответ без LLM и без поиска.
     if (isStopRequest(query)) {
       if (visitorId) await updateVisitorProfile(visitorId, { do_not_disturb: true });

@@ -277,7 +277,11 @@ export function Chat({
       visitorKey,
       type: 'page_hidden',
     });
+    let lastHiddenAt = 0;
     function sendHidden() {
+      const now = Date.now();
+      if (now - lastHiddenAt < 60_000) return; // throttle: no spam on quick tab flips
+      lastHiddenAt = now;
       try {
         void fetch('/api/events', {
           method: 'POST',
@@ -310,8 +314,9 @@ export function Chat({
   // The server is the single source of truth (enabled, DND, quiet hours,
   // attempt limit, timing, goal state); the client only displays what the
   // server allows — in-feed and, when embedded, via the loader teaser.
-  // Hard stops: an answer from the visitor (submit resets the engine),
-  // quiet hours / DND / closed dialogs (server denials stop the loop).
+  // Hard stops: DND / disabled. A visitor answer resets the series (submit)
+  // and resumes the loop; hidden tabs do not block touches — the message
+  // waits in the dialog until the visitor returns.
   const busyRef = useRef(false);
   useEffect(() => {
     busyRef.current = busy;
@@ -350,10 +355,6 @@ export function Chat({
       if (outcomeRef.current !== 'in_progress') return;
       if (busyRef.current) {
         arm(25_000);
-        return;
-      }
-      if (document.visibilityState === 'hidden') {
-        arm(30_000);
         return;
       }
 
@@ -407,8 +408,12 @@ export function Chat({
             return;
           }
           case 'limit':
-          case 'dnd':
           case 'closed':
+            // Касаний пока не положено (лимит или пауза диалога) — не
+            // «умираем»: ответ посетителя сбросит счётчик и серия продолжится.
+            arm(120_000);
+            return;
+          case 'dnd':
           case 'disabled':
           case 'no_dialog':
             return; // hard stop until the next page load
@@ -644,6 +649,9 @@ export function Chat({
         {liveNudge && !busy && (
           <div className="flex justify-start">
             <div className="max-w-[85%] space-y-1">
+              <span className="block pl-1 text-[10px]" style={{ color: p.subtleText }}>
+                Бот написал сам
+              </span>
               <div
                 className="px-4 py-3 text-sm whitespace-pre-wrap"
                 style={{

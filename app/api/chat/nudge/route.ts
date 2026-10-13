@@ -84,9 +84,19 @@ export async function POST(req: Request): Promise<Response> {
 
     const conversation = await loadConversationByKey(bot.id, sessionKey);
     if (!conversation) return deny('no_dialog');
-    if (conversation.outcome !== 'in_progress' || conversation.stage === 'done' || conversation.stage === 'lost') {
+    // Глухие стопы: цель достигнута или посетитель просил не писать.
+    if (
+      conversation.outcome === 'goal_reached' ||
+      conversation.outcome === 'stopped' ||
+      conversation.stage === 'done'
+    ) {
       return deny('closed');
     }
+    // Потерянный диалог не закрыт навсегда: разрешено одно реактивационное
+    // касание (стратег ставит lost осторожно; новое сообщение оживляет беседу).
+    const reactivation = conversation.outcome === 'lost' || conversation.stage === 'lost';
+    const maxAttempts = reactivation ? Math.min(1, proactive.attempts) : proactive.attempts;
+    if (conversation.nudgesSent >= maxAttempts) return deny('limit');
 
     const visitor = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
     if (visitor?.do_not_disturb) return deny('dnd');
@@ -110,7 +120,7 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    if (conversation.nudgesSent >= proactive.attempts) return deny('limit');
+    if (conversation.nudgesSent >= maxAttempts) return deny('limit');
 
     // --- timing: silence since the last message or nudge (0.9 tolerance)
     const { messages } = await loadRecentMessages(conversation.id, 12);
@@ -138,7 +148,8 @@ export async function POST(req: Request): Promise<Response> {
       .slice(-6000);
 
     const text = await generateNudgeText({
-      attempt,
+      // Реактивация потерянной беседы звучит как «последнее предложение».
+      attempt: reactivation ? Math.max(attempt, 3) : attempt,
       stage: conversation.stage,
       settings,
       visitor: {
@@ -179,7 +190,7 @@ export async function POST(req: Request): Promise<Response> {
       visitorId: visitor?.id ?? conversation.visitorId,
       conversationId: conversation.id,
       type: 'nudge_sent',
-      payload: { nudge: attempt, aggressiveness: effectiveAggressiveness(settings) },
+      payload: { nudge: attempt, aggressiveness: effectiveAggressiveness(settings), reactivation },
     });
 
     return Response.json({ allowed: true, text, nudgeNumber: attempt, messageId });
