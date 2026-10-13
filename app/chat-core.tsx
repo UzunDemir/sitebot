@@ -120,6 +120,7 @@ export function Chat({
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
   const [sessionKey, setSessionKey] = useState('');
+  const [inFrame, setInFrame] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Optional web font for the widget (link is scoped to this document).
@@ -148,6 +149,12 @@ export function Chat({
       key = makeSessionId();
     }
     setSessionKey(key);
+  }, []);
+
+  useEffect(() => {
+    // In widget mode (host-page iframe) we can ask the loader to
+    // collapse the chat window via postMessage.
+    setInFrame(window.parent !== window);
   }, []);
 
   const transport = useMemo(
@@ -229,6 +236,24 @@ export function Chat({
           className={`ml-auto inline-flex h-2.5 w-2.5 rounded-full ${busy ? 'bg-amber-400' : 'bg-emerald-500'}`}
           title={busy ? 'Генерирую ответ' : 'Готов'}
         />
+        {compact && inFrame && (
+          <button
+            type="button"
+            aria-label="Свернуть чат"
+            title="Свернуть"
+            onClick={() => {
+              try {
+                window.parent.postMessage({ type: 'sitebot:minimize' }, '*');
+              } catch {
+                // ignore
+              }
+            }}
+            className="-mr-1 ml-1 flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none opacity-60 transition-opacity hover:opacity-100"
+            style={{ color: p.headerText }}
+          >
+            ▾
+          </button>
+        )}
       </header>
 
       <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
@@ -337,7 +362,11 @@ export function Chat({
       <form
         onSubmit={submit}
         className="flex gap-2 border-t px-4 py-3"
-        style={{ borderColor: p.border, backgroundColor: p.headerBg }}
+        style={{
+          borderColor: p.border,
+          backgroundColor: p.headerBg,
+          ...(compact ? { paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' } : {}),
+        }}
       >
         <input
           value={input}

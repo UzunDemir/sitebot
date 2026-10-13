@@ -49,7 +49,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v7';
+  var LOADER_VERSION = 'v8';
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
@@ -605,6 +605,14 @@
     window.addEventListener('resize', function () {
       applyLauncher();
       if (frameWrap) applyFrame();
+    });
+    // The chat's minimize control (embed iframe) asks us to collapse.
+    window.addEventListener('message', function (event) {
+      if (event.origin !== apiOrigin) return;
+      var data = event.data;
+      if (data && data.type === 'sitebot:minimize' && state.opened) {
+        toggle();
+      }
     });
   }
 
