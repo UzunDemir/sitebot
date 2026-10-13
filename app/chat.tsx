@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Chat, type ChatBotInfo } from './chat-core';
+import { Chat, ChatBoundary, type ChatBotInfo } from './chat-core';
 
 type LoadError = 'not_seeded' | 'not_configured' | 'network' | 'origin_not_allowed';
 
@@ -63,7 +63,9 @@ export default function ChatLoader() {
           <span className="text-slate-400">при переключении начинается новый диалог</span>
         </div>
       )}
-      <Chat key={selected.publicKey} bot={selected} />
+      <ChatBoundary>
+        <Chat key={selected.publicKey} bot={selected} />
+      </ChatBoundary>
 
       <details className="mt-4 rounded-2xl border border-slate-200 bg-white shadow-sm">
         <summary className="cursor-pointer px-5 py-3 text-xs font-medium text-slate-500">

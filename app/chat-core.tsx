@@ -2,7 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
 
 export type ChatBotInfo = {
@@ -83,6 +83,28 @@ function paletteOf(t: WidgetTheme): Palette {
   };
 }
 
+/** Session id with fallbacks: crypto.randomUUID is missing in insecure
+ *  contexts (an https iframe inside an http page) and in old WebViews —
+ *  a session key needs uniqueness, not cryptographic randomness. */
+function makeSessionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch {
+    // fall through to the Math.random variant
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function Chat({
   bot,
   theme,
@@ -113,10 +135,17 @@ export function Chat({
   }, [t.fontUrl]);
 
   useEffect(() => {
-    let key = window.localStorage.getItem('sitebot_session');
-    if (!key) {
-      key = crypto.randomUUID();
-      window.localStorage.setItem('sitebot_session', key);
+    let key = '';
+    try {
+      key = window.localStorage.getItem('sitebot_session') ?? '';
+      if (!key) {
+        key = makeSessionId();
+        window.localStorage.setItem('sitebot_session', key);
+      }
+    } catch {
+      // Storage unavailable (private mode, blocked third-party storage in
+      // an iframe): keep the session in memory — never crash the widget.
+      key = makeSessionId();
     }
     setSessionKey(key);
   }, []);
@@ -384,4 +413,24 @@ function FeedbackButtons({ info }: { info: FeedbackInfo | null }) {
       {sent !== 0 && <span className="text-[10px] text-slate-400">спасибо, оценка сохранена</span>}
     </div>
   );
+}
+
+/** Widget must never show a blank box: any render error becomes a hint. */
+export class ChatBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="flex h-full min-h-40 items-center justify-center p-6 text-center text-sm text-slate-500">
+          Не удалось запустить чат. Обновите страницу.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Chat, type ChatBotInfo } from '../../chat-core';
+import { Chat, ChatBoundary, type ChatBotInfo } from '../../chat-core';
 
 type EmbedError = 'not_found' | 'not_seeded' | 'origin_not_allowed' | 'not_configured' | 'network';
 
@@ -52,5 +52,9 @@ export default function EmbedApp({ botKey }: { botKey: string }) {
     );
   }
 
-  return <Chat bot={bot} theme={bot.theme} compact />;
+  return (
+    <ChatBoundary>
+      <Chat bot={bot} theme={bot.theme} compact />
+    </ChatBoundary>
+  );
 }
