@@ -352,7 +352,9 @@ export function Chat({
       }
       if (!config.enabled || config.attempts <= 0) return; // hard stop
       if (nudgesSentRef.current >= config.attempts) return;
-      if (outcomeRef.current !== 'in_progress') return;
+      // Терминальные диалоги не трогаем; 'lost' — можно: сервер разрешит
+      // одно реактивационное касание, а новое сообщение оживит беседу.
+      if (outcomeRef.current === 'goal_reached' || outcomeRef.current === 'stopped') return;
       if (busyRef.current) {
         arm(25_000);
         return;
@@ -456,7 +458,7 @@ export function Chat({
       hideTimerRef.current = null;
     }
     nudgesSentRef.current = 0;
-    outcomeRef.current = 'in_progress';
+    if (outcomeRef.current === 'lost') outcomeRef.current = 'in_progress';
     sendMessage({ text });
     setInput('');
   }
