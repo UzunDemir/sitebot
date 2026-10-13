@@ -2,9 +2,9 @@
  * Chat endpoint.
  *
  * Pipeline: validate bot -> daily quota -> embed query -> hybrid search
- * (vector + FTS, RRF) -> grounded prompt -> streamText (DeepSeek) ->
- * UI message stream with `data-sources` and, after persistence,
- * `data-feedback` (the stored assistant message id for ratings).
+ * (vector + FTS, RRF) -> grounded prompt (behavior settings applied) ->
+ * streamText (DeepSeek) -> UI message stream with `data-sources` (opt)
+ * and, after persistence, `data-feedback` (stored message id for ratings).
  */
 
 import {
@@ -15,12 +15,14 @@ import {
   toUIMessageStream,
   type UIMessage,
 } from 'ai';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 import { resolveModel } from '@/lib/models';
 import { hybridSearch } from '@/lib/retrieval';
 import { buildSystemPrompt } from '@/lib/prompts';
 import { ensureConversation, saveUserMessage, saveAssistantMessage } from '@/lib/chat-store';
 import { estimateCostUsd } from '@/lib/pricing';
+import { BOT_SETTINGS_DEFAULTS, isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
 
 export const maxDuration = 60;
 
@@ -41,7 +43,11 @@ type BotRow = {
   temperature: number;
   thinking_enabled: boolean;
   top_k: number;
+  settings?: unknown;
 };
+
+const BOT_COLUMNS = 'id, public_key, model_id, system_prompt, temperature, thinking_enabled, top_k, settings';
+const BOT_COLUMNS_LEGACY = 'id, public_key, model_id, system_prompt, temperature, thinking_enabled, top_k';
 
 function jsonError(message: string, status: number): Response {
   return Response.json({ error: message }, { status });
@@ -56,6 +62,28 @@ function messageText(message: UIMessage | undefined): string {
     })
     .join('\n')
     .trim();
+}
+
+/** Fetch the bot; gracefully degrades when sql/0002_settings.sql is not applied. */
+async function fetchBot(
+  supabase: SupabaseClient,
+  publicKey: string | null,
+): Promise<BotRow | null> {
+  const build = (columns: string) => {
+    let query = supabase.from('bots').select(columns).eq('is_active', true);
+    query = publicKey
+      ? query.eq('public_key', publicKey)
+      : query.order('created_at', { ascending: true }).limit(1);
+    return query.maybeSingle();
+  };
+
+  let result = await build(BOT_COLUMNS);
+  if (result.error && isMissingColumnError(result.error)) {
+    console.warn('[chat] bots.settings column missing — run sql/0002_settings.sql (defaults applied)');
+    result = await build(BOT_COLUMNS_LEGACY);
+  }
+  if (result.error) throw result.error;
+  return (result.data as BotRow | null) ?? null;
 }
 
 function utcDay(): string {
@@ -97,32 +125,11 @@ export async function POST(req: Request): Promise<Response> {
 
     // --- resolve bot
     const supabase = getSupabase();
-    let bot: BotRow | null = null;
-
-    if (body.botKey) {
-      const { data, error } = await supabase
-        .from('bots')
-        .select('id, public_key, model_id, system_prompt, temperature, thinking_enabled, top_k')
-        .eq('public_key', body.botKey)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (error) throw error;
-      bot = data as BotRow | null;
-    } else {
-      const { data, error } = await supabase
-        .from('bots')
-        .select('id, public_key, model_id, system_prompt, temperature, thinking_enabled, top_k')
-        .eq('is_active', true)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      bot = data as BotRow | null;
-    }
-
+    const bot = await fetchBot(supabase, body.botKey ?? null);
     if (!bot) {
       return jsonError('Bot not found', 404);
     }
+    const settings = parseBotSettings(bot.settings);
 
     // --- daily quota gate
     const quota = await supabase
@@ -148,9 +155,14 @@ export async function POST(req: Request): Promise<Response> {
       return jsonError('Empty query', 400);
     }
 
+    // --- history depth (0 = full history)
+    const depth = settings.historyDepth ?? BOT_SETTINGS_DEFAULTS.historyDepth;
+    const history = depth > 0 && messages.length > depth ? messages.slice(-depth) : messages;
+
     // --- retrieval
     const sources = await hybridSearch(bot.id, query, bot.top_k ?? 6);
-    const system = buildSystemPrompt(bot.system_prompt ?? '', sources);
+    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings);
+    const showSources = settings.showSources !== false;
 
     // --- persistence (best effort for the user message)
     const conversationId = sessionKey ? await ensureConversation(bot.id, sessionKey) : null;
@@ -166,8 +178,9 @@ export async function POST(req: Request): Promise<Response> {
     const result = streamText({
       model: resolveModel(bot.model_id),
       instructions: system,
-      messages: await convertToModelMessages(messages),
+      messages: await convertToModelMessages(history),
       temperature: bot.thinking_enabled ? undefined : bot.temperature,
+      maxOutputTokens: settings.maxOutputTokens ?? BOT_SETTINGS_DEFAULTS.maxOutputTokens,
       providerOptions: {
         deepseek: {
           thinking: { type: bot.thinking_enabled ? 'enabled' : 'disabled' },
@@ -177,18 +190,20 @@ export async function POST(req: Request): Promise<Response> {
 
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
-        writer.write({
-          type: 'data-sources',
-          id: 'sources',
-          data: {
-            items: sources.map((source, index) => ({
-              n: index + 1,
-              title: source.title,
-              source: source.source,
-              similarity: source.similarity,
-            })),
-          },
-        });
+        if (showSources) {
+          writer.write({
+            type: 'data-sources',
+            id: 'sources',
+            data: {
+              items: sources.map((source, index) => ({
+                n: index + 1,
+                title: source.title,
+                source: source.source,
+                similarity: source.similarity,
+              })),
+            },
+          });
+        }
 
         await writer.merge(toUIMessageStream({ stream: result.stream }));
 

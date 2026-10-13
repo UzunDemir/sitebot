@@ -5,8 +5,11 @@
 import { adminGuard } from '@/lib/admin-auth';
 import { getSupabase } from '@/lib/supabase';
 import { AVAILABLE_MODELS } from '@/lib/models';
+import { isMissingColumnError } from '@/lib/bot-settings';
 
 const BOT_COLUMNS =
+  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, settings, created_at';
+const BOT_COLUMNS_LEGACY =
   'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, created_at';
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -17,16 +20,19 @@ export async function GET(req: Request): Promise<Response> {
   if (guard) return guard;
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('bots')
-    .select(BOT_COLUMNS)
-    .order('created_at', { ascending: true });
-  if (error) {
-    console.error('[admin] bots list failed:', error);
+  // A function parameter (not a literal) keeps both branches the same type.
+  const build = (columns: string) =>
+    supabase.from('bots').select(columns).order('created_at', { ascending: true });
+  let result = await build(BOT_COLUMNS);
+  if (result.error && isMissingColumnError(result.error)) {
+    result = await build(BOT_COLUMNS_LEGACY);
+  }
+  if (result.error) {
+    console.error('[admin] bots list failed:', result.error);
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
-  return Response.json({ bots: data ?? [], models: AVAILABLE_MODELS });
+  return Response.json({ bots: result.data ?? [], models: AVAILABLE_MODELS });
 }
 
 export async function POST(req: Request): Promise<Response> {

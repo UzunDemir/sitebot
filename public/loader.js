@@ -49,7 +49,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v8';
+  var LOADER_VERSION = 'v9';
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
@@ -63,6 +63,7 @@
     dragging: false,
     suppressClick: false,
     entrancePlayed: false,
+    windowPos: null,
   };
 
   var launcher = document.createElement('button');
@@ -390,6 +391,19 @@
   // (translateZ + webkit mask) — this removes the white corner fringes
   // that a plain border-radius + overflow:hidden on an iframe produces.
 
+  function moveWindow(dx, dy) {
+    if (!state.opened || isMobile() || !frameWrap) return;
+    if (typeof dx !== 'number' || typeof dy !== 'number') return;
+    var rect = frameWrap.getBoundingClientRect();
+    var w = rect.width;
+    var h = rect.height;
+    var left = clamp(rect.left + dx, 8, Math.max(8, vw() - w - 8));
+    var top = clamp(rect.top + dy, 8, Math.max(8, vh() - h - 8));
+    state.windowPos = { left: left, top: top };
+    frameWrap.style.left = left + 'px';
+    frameWrap.style.top = top + 'px';
+  }
+
   function createFrame() {
     frameWrap = document.createElement('div'); // outer: shadow + geometry
     frameClip = document.createElement('div'); // inner: the rounded clip
@@ -448,6 +462,11 @@
     var top = above
       ? pos.top - h - 12
       : clamp(pos.top + size + 12, 8, Math.max(8, vh() - h - 8));
+    if (state.windowPos) {
+      left = clamp(state.windowPos.left, 8, Math.max(8, vw() - w - 8));
+      top = clamp(state.windowPos.top, 8, Math.max(8, vh() - h - 8));
+      state.windowPos = { left: left, top: top };
+    }
     frameWrap.style.position = 'fixed';
     frameWrap.style.left = left + 'px';
     frameWrap.style.top = top + 'px';
@@ -610,8 +629,14 @@
     window.addEventListener('message', function (event) {
       if (event.origin !== apiOrigin) return;
       var data = event.data;
-      if (data && data.type === 'sitebot:minimize' && state.opened) {
+      if (!data) return;
+      if (data.type === 'sitebot:minimize' && state.opened) {
         toggle();
+      } else if (data.type === 'sitebot:move') {
+        moveWindow(data.dx, data.dy);
+      } else if (data.type === 'sitebot:move-reset') {
+        state.windowPos = null;
+        if (frameWrap) applyFrame();
       }
     });
   }

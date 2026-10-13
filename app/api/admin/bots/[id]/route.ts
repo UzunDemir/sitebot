@@ -7,10 +7,13 @@ import { adminGuard } from '@/lib/admin-auth';
 import { getSupabase } from '@/lib/supabase';
 import { AVAILABLE_MODELS } from '@/lib/models';
 import { parseWidgetTheme } from '@/lib/widget-theme';
+import { isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
 
 const MODEL_IDS = new Set(AVAILABLE_MODELS.map((m) => m.id));
 
 const BOT_COLUMNS =
+  'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, settings, created_at';
+const BOT_COLUMNS_LEGACY =
   'id, name, public_key, model_id, system_prompt, greeting, temperature, top_k, thinking_enabled, is_active, theme, allowed_origins, created_at';
 
 function normalizeOrigin(value: string): string | null {
@@ -61,6 +64,11 @@ export async function PATCH(
     patch.theme = parseWidgetTheme(body.theme);
   }
 
+  // Behavior settings (logic layer), sanitized in one place.
+  if (typeof body.settings === 'object' && body.settings !== null) {
+    patch.settings = parseBotSettings(body.settings);
+  }
+
   if (typeof body.allowed_origins === 'string') {
     const origins = body.allowed_origins
       .split(/[\n,]+/)
@@ -75,7 +83,19 @@ export async function PATCH(
   }
 
   const supabase = getSupabase();
-  const upd = await supabase.from('bots').update(patch).eq('id', id).select(BOT_COLUMNS).single();
+  let upd = await supabase.from('bots').update(patch).eq('id', id).select(BOT_COLUMNS).single();
+  if (upd.error && isMissingColumnError(upd.error)) {
+    if ('settings' in patch) {
+      return Response.json(
+        {
+          error: 'settings_not_migrated',
+          message: 'Настройки логики требуют миграции: выполните sql/0002_settings.sql в Supabase SQL Editor.',
+        },
+        { status: 422 },
+      );
+    }
+    upd = await supabase.from('bots').update(patch).eq('id', id).select(BOT_COLUMNS_LEGACY).single();
+  }
   if (upd.error) {
     console.error('[admin] bot update failed:', upd.error);
     return Response.json({ error: 'internal' }, { status: 500 });

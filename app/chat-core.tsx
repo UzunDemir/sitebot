@@ -2,7 +2,15 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
 
 export type ChatBotInfo = {
@@ -157,6 +165,37 @@ export function Chat({
     setInFrame(window.parent !== window);
   }, []);
 
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const draggable = compact && inFrame;
+
+  function onHeaderPointerDown(e: ReactPointerEvent<HTMLElement>) {
+    if (!draggable) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // pointer capture unsupported — drag still works inside the frame
+    }
+  }
+
+  function onHeaderPointerMove(e: ReactPointerEvent<HTMLElement>) {
+    if (!draggable || !dragRef.current) return;
+    const dx = e.clientX - dragRef.current.x;
+    const dy = e.clientY - dragRef.current.y;
+    if (dx === 0 && dy === 0) return;
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    try {
+      window.parent.postMessage({ type: 'sitebot:move', dx, dy }, '*');
+    } catch {
+      // ignore
+    }
+  }
+
+  function onHeaderPointerUp() {
+    dragRef.current = null;
+  }
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -209,7 +248,23 @@ export function Chat({
     >
       <header
         className="flex items-center gap-3 border-b px-5 py-4"
-        style={{ backgroundColor: p.headerBg, borderColor: p.border }}
+        style={{
+          backgroundColor: p.headerBg,
+          borderColor: p.border,
+          ...(draggable ? { cursor: 'grab', touchAction: 'none' } : {}),
+        }}
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onHeaderPointerMove}
+        onPointerUp={onHeaderPointerUp}
+        onPointerCancel={onHeaderPointerUp}
+        onDoubleClick={() => {
+          if (!draggable) return;
+          try {
+            window.parent.postMessage({ type: 'sitebot:move-reset' }, '*');
+          } catch {
+            // ignore
+          }
+        }}
       >
         {t.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
