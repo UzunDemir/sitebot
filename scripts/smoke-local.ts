@@ -20,7 +20,26 @@ import {
   sessionStorageKey,
   visitorStorageKey,
 } from '../lib/session-key';
-import { factsAreEmpty, mergeVisitorFacts, sanitizeVisitorFacts } from '../lib/visitor-memory';
+import {
+  factsAreEmpty,
+  mergeVisitorFacts,
+  sanitizeStrategistResult,
+  sanitizeVisitorFacts,
+} from '../lib/visitor-memory';
+import {
+  BOT_SETTINGS_DEFAULTS,
+  effectiveAggressiveness,
+  effectiveProactive,
+  parseBotSettings,
+} from '../lib/bot-settings';
+import {
+  inQuietWindow,
+  isStopRequest,
+  minutesOf,
+  nudgeFallbackText,
+  quietHoursEnd,
+  sanitizeNudgeText,
+} from '../lib/nudge';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
@@ -217,6 +236,131 @@ function main(): void {
       console.log('  ✓ повторный факт не дублируется в дайджесте');
     } else {
       console.error(`❌ дайджест продублирован: ${mergedAgain.memory_digest}`);
+      failures += 1;
+    }
+  }
+
+  // --- 6. Ф3: стоп-слова, тихие часы, дожим, стратег, настройки
+  console.log('── nudge / strategist ──');
+  {
+    // stop words: caught phrases vs ordinary questions
+    const stops = [
+      'Не пишите мне больше',
+      'пожалуйста, стоп',
+      'Stop!',
+      'отстаньте от меня',
+      'прекратите писать',
+    ];
+    const notStops = ['Расскажите про доставку', 'Что такое возврат?', 'А есть скидки?'];
+    if (stops.every((t) => isStopRequest(t)) && notStops.every((t) => !isStopRequest(t))) {
+      console.log('  ✓ isStopRequest: стоп-фразы пойманы, обычные вопросы — нет');
+    } else {
+      console.error(
+        `❌ isStopRequest: ${[...stops, ...notStops].map((t) => `${t}=${isStopRequest(t)}`).join(', ')}`,
+      );
+      failures += 1;
+    }
+
+    // quiet hours: HH:MM math + the midnight wrap
+    const quietOk =
+      minutesOf('21:00') === 1260 &&
+      minutesOf('9:30') === 570 &&
+      minutesOf('25:00') === null &&
+      minutesOf('21:70') === null &&
+      inQuietWindow(22 * 60 + 30, 1260, 540) === true &&
+      inQuietWindow(8 * 60, 1260, 540) === true &&
+      inQuietWindow(10 * 60, 1260, 540) === false &&
+      inQuietWindow(13 * 60, 780, 840) === true &&
+      inQuietWindow(15 * 60, 780, 840) === false;
+    if (quietOk) {
+      console.log('  ✓ тихие часы: окно и переход через полночь считаются верно');
+    } else {
+      console.error('❌ тихие часы: арифметика окна сломана');
+      failures += 1;
+    }
+
+    const end = quietHoursEnd(new Date('2026-01-15T22:30:00Z'), 'UTC', 540);
+    if (end && end.toISOString() === '2026-01-16T09:00:00.000Z') {
+      console.log('  ✓ quietHoursEnd: конец окна — завтра в 09:00 UTC');
+    } else {
+      console.error(`❌ quietHoursEnd: ${end ? end.toISOString() : 'null'}`);
+      failures += 1;
+    }
+
+    // nudge text sanitizing + canned fallbacks
+    const textOk =
+      sanitizeNudgeText('  «Ещё раз здравствуйте!»  ') === 'Ещё раз здравствуйте!' &&
+      sanitizeNudgeText('   ') === null &&
+      sanitizeNudgeText(42) === null &&
+      sanitizeNudgeText(`x`.repeat(900))?.length === 500;
+    const fallbacks = [nudgeFallbackText(1), nudgeFallbackText(2), nudgeFallbackText(4)];
+    if (textOk && fallbacks.every((t) => t.length > 0) && new Set(fallbacks).size === 3) {
+      console.log('  ✓ sanitizeNudgeText / nudgeFallbackText в порядке');
+    } else {
+      console.error(`❌ nudge text helpers: ${JSON.stringify(fallbacks)}`);
+      failures += 1;
+    }
+
+    // strategist output: stage + goal_progress + facts
+    const strat = sanitizeStrategistResult({
+      stage: 'offer',
+      goal_progress: 'achieved',
+      name: 'Игорь',
+      contacts: { phone: '+7 900 000-00-00' },
+      interests: ['пуховики'],
+      note: 'Ждёт звонка',
+    });
+    const stratJunk = sanitizeStrategistResult({ stage: 'какая-то', goal_progress: 'чуток' });
+    if (
+      strat.stage === 'offer' &&
+      strat.goalProgress === 'achieved' &&
+      strat.facts.name === 'Игорь' &&
+      strat.facts.contacts?.phone === '+7 900 000-00-00' &&
+      strat.facts.note === 'Ждёт звонка' &&
+      stratJunk.stage === undefined &&
+      stratJunk.goalProgress === undefined
+    ) {
+      console.log('  ✓ стратег: стадия и прогресс цели разобраны, мусор отброшен');
+    } else {
+      console.error(`❌ стратег: ${JSON.stringify({ strat, stratJunk })}`);
+      failures += 1;
+    }
+
+    // settings: aggressiveness scale + legacy mapping + proactive parsing
+    const parsed = parseBotSettings({
+      aggressiveness: 65,
+      tone: 80,
+      goal: 'messenger',
+      proactive: {
+        enabled: true,
+        nudges: { attempts: 3, firstDelaySec: 30, intervalSec: 120 },
+        quietHours: { enabled: true, from: '21:00', to: '09:00' },
+      },
+    });
+    const proactive = effectiveProactive(parsed);
+    const legacy = parseBotSettings({ salesPressure: 2 });
+    if (
+      parsed.aggressiveness === 65 &&
+      parsed.tone === 80 &&
+      parsed.goal === 'messenger' &&
+      proactive.enabled === true &&
+      proactive.attempts === 3 &&
+      proactive.firstDelaySec === 30 &&
+      proactive.intervalSec === 120 &&
+      proactive.quietHours.from === '21:00' &&
+      effectiveAggressiveness(parsed) === 65 &&
+      effectiveAggressiveness(legacy) === 80 &&
+      effectiveAggressiveness({}) === BOT_SETTINGS_DEFAULTS.aggressiveness &&
+      effectiveAggressiveness({ aggressiveness: 15, salesPressure: 2 }) === 15 &&
+      parseBotSettings({ aggressiveness: 250 }).aggressiveness === 100 &&
+      parseBotSettings({ goal: 'несуществующая' }).goal === undefined &&
+      effectiveProactive({}).attempts === BOT_SETTINGS_DEFAULTS.proactive.nudges.attempts
+    ) {
+      console.log('  ✓ настройки: агрессивность (в т.ч. legacy), цели, дожим разобраны');
+    } else {
+      console.error(
+        `❌ настройки: ${JSON.stringify({ parsed, proactive, legacyAgg: effectiveAggressiveness(legacy) })}`,
+      );
       failures += 1;
     }
   }

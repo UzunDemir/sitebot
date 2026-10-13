@@ -42,7 +42,7 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v10';
+  var LOADER_VERSION = 'v11';
   try {
     window.__sitebotLoader = LOADER_VERSION;
   } catch (e) {
@@ -572,11 +572,19 @@
     }
   }
 
-  function showTeaser() {
-    if (state.opened || state.teaserDismissed || teaser) return;
-    var proactive = theme.proactive;
-    if (!proactive || proactive.enabled !== true) return;
-    var text = str(proactive.text) || 'Здравствуйте! Подскажу что-нибудь?';
+  function showTeaser(overrideText) {
+    if (state.opened || teaser) return;
+    var text = str(overrideText);
+    if (!text) {
+      // Automatic teaser: respects the bot's proactive settings and the
+      // visitor's dismissal. A nudge (overrideText) skips both — it comes
+      // from the server, which has already applied its own guards (DND,
+      // quiet hours, attempt limit) for this visitor.
+      if (state.teaserDismissed) return;
+      var proactive = theme.proactive;
+      if (!proactive || proactive.enabled !== true) return;
+      text = str(proactive.text) || 'Здравствуйте! Подскажу что-нибудь?';
+    }
     teaser = document.createElement('div');
     teaser.style.cssText = [
       'position:fixed',
@@ -632,6 +640,13 @@
       if (!data) return;
       if (data.type === 'sitebot:minimize' && state.opened) {
         toggle();
+      } else if (data.type === 'sitebot:nudge' && typeof data.text === 'string' && data.text) {
+        // The chat window is closed and the bot decided to follow up:
+        // surface the touch as a teaser bubble next to the launcher.
+        if (!state.opened) {
+          hideTeaser(false);
+          showTeaser(data.text);
+        }
       } else if (data.type === 'sitebot:move') {
         moveWindow(data.dx, data.dy);
       } else if (data.type === 'sitebot:move-reset') {

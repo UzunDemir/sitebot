@@ -4,6 +4,7 @@
  */
 
 import { getSupabase } from './supabase';
+import { isMissingColumnError } from './bot-settings';
 
 export async function ensureConversation(botId: string, sessionKey: string): Promise<string> {
   const supabase = getSupabase();
@@ -61,6 +62,9 @@ export type AssistantMessagePayload = {
   outputTokens: number;
   costUsd: number;
   latencyMs: number;
+  /** Proactive touch (nudge) — needs sql/0003; degrades gracefully without it. */
+  isProactive?: boolean;
+  nudgeNumber?: number | null;
 };
 
 export async function saveAssistantMessage(
@@ -68,9 +72,9 @@ export async function saveAssistantMessage(
   payload: AssistantMessagePayload,
 ): Promise<number> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('messages')
-    .insert({
+
+  const build = (withProactive: boolean): Record<string, unknown> => {
+    const row: Record<string, unknown> = {
       conversation_id: conversationId,
       role: 'assistant',
       content: payload.content,
@@ -80,10 +84,29 @@ export async function saveAssistantMessage(
       output_tokens: payload.outputTokens,
       cost_usd: payload.costUsd,
       latency_ms: payload.latencyMs,
-    })
+    };
+    if (withProactive) {
+      row.is_proactive = true;
+      row.nudge_number = payload.nudgeNumber ?? null;
+    }
+    return row;
+  };
+
+  const wantsProactive = payload.isProactive === true;
+  const { data, error } = await supabase
+    .from('messages')
+    .insert(build(wantsProactive))
     .select('id')
     .single();
-  if (error) throw error;
+  if (error) {
+    // Old schema without sql/0003: retry without the proactive columns.
+    if (wantsProactive && isMissingColumnError(error)) {
+      const retry = await supabase.from('messages').insert(build(false)).select('id').single();
+      if (retry.error) throw retry.error;
+      return retry.data.id as number;
+    }
+    throw error;
+  }
   return data.id as number;
 }
 
@@ -167,4 +190,113 @@ export async function loadRatings(messageIds: number[]): Promise<Map<number, 1 |
     }
   }
   return ratings;
+}
+
+/* ---------------------------------------------------------------- */
+/* Conversation state: stage, outcome, nudge counters (sql/0003)    */
+/* ---------------------------------------------------------------- */
+
+export type ConversationMeta = {
+  id: string;
+  botId: string;
+  stage: string;
+  outcome: string;
+  nudgesSent: number;
+  lastNudgeAt: string | null;
+  visitorId: string | null;
+};
+
+function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
+  return {
+    id: String(row.id),
+    botId: typeof row.bot_id === 'string' ? row.bot_id : '',
+    stage: typeof row.stage === 'string' ? row.stage : 'greeting',
+    outcome: typeof row.outcome === 'string' ? row.outcome : 'in_progress',
+    nudgesSent: typeof row.nudges_sent === 'number' ? row.nudges_sent : 0,
+    lastNudgeAt: typeof row.last_nudge_at === 'string' ? row.last_nudge_at : null,
+    visitorId: typeof row.visitor_id === 'string' ? row.visitor_id : null,
+  };
+}
+
+const CONVERSATION_META_COLUMNS = 'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id';
+const CONVERSATION_META_LEGACY = 'id, bot_id';
+
+export async function loadConversationById(conversationId: string): Promise<ConversationMeta | null> {
+  const supabase = getSupabase();
+  const full = await supabase
+    .from('conversations')
+    .select(CONVERSATION_META_COLUMNS)
+    .eq('id', conversationId)
+    .maybeSingle();
+  if (full.error && isMissingColumnError(full.error)) {
+    const bare = await supabase
+      .from('conversations')
+      .select(CONVERSATION_META_LEGACY)
+      .eq('id', conversationId)
+      .maybeSingle();
+    if (bare.error) throw bare.error;
+    return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+  }
+  if (full.error) throw full.error;
+  return full.data ? parseConversationMeta(full.data as Record<string, unknown>) : null;
+}
+
+export async function loadConversationByKey(
+  botId: string,
+  sessionKey: string,
+): Promise<ConversationMeta | null> {
+  const supabase = getSupabase();
+  const full = await supabase
+    .from('conversations')
+    .select(CONVERSATION_META_COLUMNS)
+    .eq('bot_id', botId)
+    .eq('session_key', sessionKey)
+    .maybeSingle();
+  if (full.error && isMissingColumnError(full.error)) {
+    const bare = await supabase
+      .from('conversations')
+      .select(CONVERSATION_META_LEGACY)
+      .eq('bot_id', botId)
+      .eq('session_key', sessionKey)
+      .maybeSingle();
+    if (bare.error) throw bare.error;
+    return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+  }
+  if (full.error) throw full.error;
+  return full.data ? parseConversationMeta(full.data as Record<string, unknown>) : null;
+}
+
+export type ConversationPatch = {
+  stage?: string;
+  outcome?: string;
+  nudges_sent?: number;
+  last_nudge_at?: string | null;
+  last_active_at?: string;
+  summary?: string;
+};
+
+/** Best-effort conversation update; degrades on the pre-0003 schema. */
+export async function updateConversationFields(
+  conversationId: string,
+  patch: ConversationPatch,
+): Promise<void> {
+  try {
+    const supabase = getSupabase();
+    const upd = await supabase.from('conversations').update(patch).eq('id', conversationId);
+    if (upd.error && isMissingColumnError(upd.error)) {
+      if (patch.last_active_at) {
+        const fallback = await supabase
+          .from('conversations')
+          .update({ last_active_at: patch.last_active_at })
+          .eq('id', conversationId);
+        if (fallback.error) {
+          console.warn('[chat-store] conversation update failed:', fallback.error.message);
+        }
+      }
+      return;
+    }
+    if (upd.error) console.warn('[chat-store] conversation update failed:', upd.error.message);
+  } catch (err) {
+    console.warn('[chat-store] conversation update error:', err);
+  }
 }

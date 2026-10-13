@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WidgetColors, WidgetTheme } from '@/lib/widget-theme';
 import {
   BOT_SETTINGS_DEFAULTS,
+  effectiveAggressiveness,
   type BotChattiness,
   type BotGoal,
   type BotSettings,
@@ -402,7 +403,7 @@ function BotSettings({
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=10" data-bot="${bot.public_key}" async></script>`;
+  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=11" data-bot="${bot.public_key}" async></script>`;
 
   function setThemeField<K extends keyof WidgetTheme>(key: K, value: WidgetTheme[K]) {
     setTheme((prev) => ({ ...prev, [key]: value }));
@@ -414,6 +415,10 @@ function BotSettings({
 
   function setSetting<K extends keyof BotSettings>(key: K, value: BotSettings[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setProactive(patch: NonNullable<BotSettings['proactive']>) {
+    setSettings((prev) => ({ ...prev, proactive: { ...(prev.proactive ?? {}), ...patch } }));
   }
 
   async function readImageFile(file: File): Promise<string | null> {
@@ -613,16 +618,35 @@ function BotSettings({
             </select>
           </label>
           <label className="space-y-1 text-xs text-slate-500">
-            Агрессивность продаж
-            <select
-              value={String(settings.salesPressure ?? 0)}
-              onChange={(e) => setSetting('salesPressure', Number(e.target.value) as 0 | 1 | 2)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
-            >
-              <option value="0">Без давления</option>
-              <option value="1">Умеренно предлагать</option>
-              <option value="2">Активно продавать</option>
-            </select>
+            Агрессивность продаж: {effectiveAggressiveness(settings)}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={effectiveAggressiveness(settings)}
+              onChange={(e) => setSetting('aggressiveness', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">
+              0 — без давления · 50 — мягко предлагать · 80+ — активно вести к цели
+              {settings.aggressiveness == null
+                ? ` (сейчас действует старая настройка «${settings.salesPressure === 2 ? 'активно продавать' : settings.salesPressure === 1 ? 'умеренно' : 'без давления'}» — троньте ползунок, чтобы закрепить)`
+                : ''}
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Тон общения: {settings.tone ?? BOT_SETTINGS_DEFAULTS.tone}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.tone ?? BOT_SETTINGS_DEFAULTS.tone}
+              onChange={(e) => setSetting('tone', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">0 — дружеский · 100 — официальный</span>
           </label>
           <label className="space-y-1 text-xs text-slate-500">
             Цель диалога
@@ -632,9 +656,15 @@ function BotSettings({
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
             >
               <option value="none">Без цели</option>
-              <option value="call">Договориться о звонке</option>
-              <option value="purchase">Довести до покупки</option>
               <option value="phone">Получить телефон</option>
+              <option value="messenger">Перевести в мессенджер</option>
+              <option value="call">Договориться о звонке</option>
+              <option value="booking">Записать на визит/примерку</option>
+              <option value="demo">Договориться о демо</option>
+              <option value="purchase">Довести до покупки</option>
+              <option value="order">Оформить заказ</option>
+              <option value="quote">Подготовить расчёт</option>
+              <option value="review">Получить отзыв</option>
               <option value="birthday">Узнать день рождения</option>
               <option value="custom">Своя цель…</option>
             </select>
@@ -667,6 +697,138 @@ function BotSettings({
             метрика цитирования в статистике перестанет расти.
           </p>
         )}
+
+        <div className="space-y-3 border-t border-slate-200 pt-3">
+          <p className="text-xs font-semibold text-slate-600">Дожим молчащих посетителей</p>
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={settings.proactive?.enabled !== false}
+              onChange={(e) => setProactive({ enabled: e.target.checked })}
+              className="h-4 w-4"
+            />
+            Писать первым, если посетитель замолчал (в рамках лимита касаний)
+          </label>
+          {settings.proactive?.enabled !== false && (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="space-y-1 text-xs text-slate-500">
+                Касаний подряд (0–5)
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={
+                    settings.proactive?.nudges?.attempts ??
+                    BOT_SETTINGS_DEFAULTS.proactive.nudges.attempts
+                  }
+                  onChange={(e) =>
+                    setProactive({
+                      nudges: {
+                        ...(settings.proactive?.nudges ?? {}),
+                        attempts: Number(e.target.value) || 0,
+                      },
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-1 text-xs text-slate-500">
+                Пауза перед первым, сек (15–600)
+                <input
+                  type="number"
+                  min={15}
+                  max={600}
+                  value={
+                    settings.proactive?.nudges?.firstDelaySec ??
+                    BOT_SETTINGS_DEFAULTS.proactive.nudges.firstDelaySec
+                  }
+                  onChange={(e) =>
+                    setProactive({
+                      nudges: {
+                        ...(settings.proactive?.nudges ?? {}),
+                        firstDelaySec: Number(e.target.value) || 45,
+                      },
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-1 text-xs text-slate-500">
+                Интервал между касаниями, сек (60–86400)
+                <input
+                  type="number"
+                  min={60}
+                  max={86400}
+                  value={
+                    settings.proactive?.nudges?.intervalSec ??
+                    BOT_SETTINGS_DEFAULTS.proactive.nudges.intervalSec
+                  }
+                  onChange={(e) =>
+                    setProactive({
+                      nudges: {
+                        ...(settings.proactive?.nudges ?? {}),
+                        intervalSec: Number(e.target.value) || 300,
+                      },
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </label>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={settings.proactive?.quietHours?.enabled === true}
+                onChange={(e) =>
+                  setProactive({
+                    quietHours: { ...(settings.proactive?.quietHours ?? {}), enabled: e.target.checked },
+                  })
+                }
+                className="h-4 w-4"
+              />
+              Тихие часы (не писать в это время)
+            </label>
+            {settings.proactive?.quietHours?.enabled === true && (
+              <>
+                <label className="space-y-1 text-xs text-slate-500">
+                  С
+                  <input
+                    type="time"
+                    value={
+                      settings.proactive?.quietHours?.from ??
+                      BOT_SETTINGS_DEFAULTS.proactive.quietHours.from
+                    }
+                    onChange={(e) =>
+                      setProactive({
+                        quietHours: { ...(settings.proactive?.quietHours ?? {}), enabled: true, from: e.target.value },
+                      })
+                    }
+                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                  />
+                </label>
+                <label className="space-y-1 text-xs text-slate-500">
+                  До
+                  <input
+                    type="time"
+                    value={
+                      settings.proactive?.quietHours?.to ??
+                      BOT_SETTINGS_DEFAULTS.proactive.quietHours.to
+                    }
+                    onChange={(e) =>
+                      setProactive({
+                        quietHours: { ...(settings.proactive?.quietHours ?? {}), enabled: true, to: e.target.value },
+                      })
+                    }
+                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                  />
+                </label>
+                <span className="text-[10px] text-slate-400">по местному времени посетителя</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
         </>
       )}

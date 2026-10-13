@@ -12,13 +12,15 @@ import { getSupabase } from '@/lib/supabase';
 import { ensureVisitor, isMissingRelationError } from '@/lib/visitors';
 import { getConversationId } from '@/lib/chat-store';
 
-/** Types produced by the widget (stop_request/goal_reached arrive in Ф3). */
+/** Types produced by the widget and the server (nudges arrive in Ф3). */
 const EVENT_TYPES = new Set([
   'session_start',
   'page_hidden',
   'stop_request',
   'goal_reached',
   'session_closed',
+  'nudge_sent',
+  'nudge_answered',
 ]);
 
 const MAX_PAYLOAD = 2000;

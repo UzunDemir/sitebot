@@ -1,31 +1,51 @@
 /**
- * Visitor memory: extraction and merging of facts from the dialog.
+ * Dialog strategist + visitor memory (Ф3).
  *
  * After each assistant answer the chat route schedules a best-effort
- * extraction (cheap model, JSON) that updates the visitor card: name,
- * contacts, interests, a short digest line. Any failure is ignored —
- * the dialog itself never depends on this layer.
+ * evaluation (cheap model, JSON): facts about the visitor (name, contacts,
+ * interests, a short digest line), the dialog stage and goal progress.
+ * Failures are ignored — the dialog itself never depends on this layer.
  *
- * sanitizeVisitorFacts() and mergeVisitorFacts() are pure and unit-tested
- * in scripts/smoke-local.ts.
+ * sanitizeVisitorFacts(), sanitizeStrategistResult() and mergeVisitorFacts()
+ * are pure and unit-tested in scripts/smoke-local.ts.
  */
 
 import { generateText } from 'ai';
 import { resolveModel } from './models';
-import { loadRecentMessages } from './chat-store';
+import { loadRecentMessages, updateConversationFields, loadConversationById } from './chat-store';
 import {
   CONTACT_KEYS,
   getVisitorById,
+  recordEvent,
   updateVisitorProfile,
   type VisitorContacts,
   type VisitorRow,
 } from './visitors';
+import type { BotGoal } from './bot-settings';
 
 export type VisitorFacts = {
   name?: string;
   contacts?: VisitorContacts;
   interests?: string[];
   note?: string;
+};
+
+/** Dialog stages (stored in conversations.stage). */
+export const STAGES = [
+  'greeting',
+  'qualification',
+  'offer',
+  'objections',
+  'close',
+  'followup',
+  'done',
+  'lost',
+] as const;
+
+export type StrategistResult = {
+  facts: VisitorFacts;
+  stage?: string;
+  goalProgress?: 'none' | 'progress' | 'achieved';
 };
 
 const MAX_NAME = 80;
@@ -36,22 +56,27 @@ const MAX_NOTE = 180;
 const MAX_DIGEST = 1800;
 const MAX_TRANSCRIPT = 6000;
 
-const EXTRACT_INSTRUCTIONS = `Ты — модуль памяти CRM интернет-магазина. По фрагменту диалога посетителя с ассистентом извлеки факты о посетителе.
+const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стратегии CRM интернет-магазина. По фрагменту диалога посетителя с ассистентом извлеки факты о посетителе и оцени ход диалога.
 
 Верни СТРОГО JSON (без markdown, без пояснений):
 {
+  "stage": "greeting" | "qualification" | "offer" | "objections" | "close" | "followup" | "done" | "lost",
+  "goal_progress": "none" | "progress" | "achieved",
   "name": "<имя, которым представился посетитель>" | null,
   "contacts": { "phone": "...", "email": "...", "telegram": "...", "whatsapp": "...", "vk": "...", "other": "..." },
   "interests": ["<товар или тема>"],
   "note": "<один короткий факт для карточки>" | null
 }
 
+Стадии: greeting — только поздоровались; qualification — выясняете потребность; offer — предложен вариант; objections — есть возражения; close — оформление/договорённость; followup — посетитель молчит/пауза; done — цель достигнута; lost — явный отказ.
+
 Правила:
 - Только то, что посетитель сообщил сам. Не выдумывай и не угадывай.
 - Нет данных для поля — не включай его (для name/note — null).
 - Контакты записывай так, как их назвал посетитель, без форматирования.
 - interests: максимум 3 коротких темы.
-- note: до 140 символов; только новый полезный факт (заказ, проблема, срок, пожелание); не повторяй факты из текущей карточки.`;
+- note: до 140 символов; только новый полезный факт (заказ, проблема, срок, пожелание); не повторяй факты из текущей карточки.
+- goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — цель из условия уже выполнена по диалогу или карточке.`;
 
 /** Validate model output: trim, cap, drop unknown contact keys and junk. */
 export function sanitizeVisitorFacts(input: unknown): VisitorFacts {
@@ -95,6 +120,22 @@ export function sanitizeVisitorFacts(input: unknown): VisitorFacts {
   return out;
 }
 
+/** Full strategist output: facts + stage + goal progress. */
+export function sanitizeStrategistResult(input: unknown): StrategistResult {
+  const facts = sanitizeVisitorFacts(input);
+  const out: StrategistResult = { facts };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  const raw = input as Record<string, unknown>;
+
+  if (typeof raw.stage === 'string' && (STAGES as readonly string[]).includes(raw.stage)) {
+    out.stage = raw.stage;
+  }
+  if (raw.goal_progress === 'achieved' || raw.goal_progress === 'progress' || raw.goal_progress === 'none') {
+    out.goalProgress = raw.goal_progress;
+  }
+  return out;
+}
+
 export function factsAreEmpty(facts: VisitorFacts): boolean {
   return (
     !facts.name &&
@@ -135,24 +176,50 @@ export function mergeVisitorFacts(
   return { name, contacts, meta, memory_digest: digest };
 }
 
-/** One cheap LLM call: dialog fragment + current card → new facts. */
-export async function extractVisitorFacts(
+/** Goals that are provably achieved by the visitor card itself. */
+function goalReachedByFacts(goal: BotGoal, contacts: VisitorContacts): boolean {
+  if (goal === 'phone' || goal === 'call') return Boolean(contacts.phone);
+  if (goal === 'messenger') return Boolean(contacts.telegram || contacts.whatsapp);
+  return false;
+}
+
+export type StrategistContext = {
+  goal: BotGoal;
+  goalText: string;
+};
+
+/** One cheap LLM call: dialog fragment + card → facts + stage + progress. */
+export async function evaluateDialog(
   transcript: string,
-  current: { name: string | null; contacts: VisitorContacts; interests: string[] },
-): Promise<VisitorFacts | null> {
+  current: {
+    name: string | null;
+    contacts: VisitorContacts;
+    interests: string[];
+    stage: string;
+    goal: BotGoal;
+    goalText: string;
+  },
+): Promise<StrategistResult | null> {
   try {
     const card = {
       name: current.name,
       contacts: current.contacts,
       interests: current.interests,
     };
+    const goalLine =
+      current.goal === 'none'
+        ? 'Цель диалога не задана.'
+        : current.goal === 'custom'
+          ? `Цель диалога: ${current.goalText || '(своя, без описания)'}.`
+          : `Цель диалога (пресет): ${current.goal}.`;
+
     const result = await generateText({
       model: resolveModel('deepseek:deepseek-flash'),
-      instructions: EXTRACT_INSTRUCTIONS,
+      instructions: STRATEGIST_INSTRUCTIONS,
       messages: [
         {
           role: 'user',
-          content: `Текущая карточка: ${JSON.stringify(card)}\n\nДиалог:\n${transcript}`,
+          content: `Текущая карточка: ${JSON.stringify(card)}\nТекущая стадия: ${current.stage}\n${goalLine}\n\nДиалог:\n${transcript}`,
         },
       ],
       temperature: 0,
@@ -165,20 +232,25 @@ export async function extractVisitorFacts(
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if (start === -1 || end <= start) return null;
-    return sanitizeVisitorFacts(JSON.parse(text.slice(start, end + 1)));
+    return sanitizeStrategistResult(JSON.parse(text.slice(start, end + 1)));
   } catch (err) {
-    console.warn('[visitors] extraction failed:', err);
+    console.warn('[visitors] strategist call failed:', err);
     return null;
   }
 }
 
-/** Read the tail of the dialog, extract facts and update the card. */
-export async function refreshVisitorMemory(
+/**
+ * Background pass after a finished exchange: update the card, the dialog
+ * stage and goal state; record the goal_reached event once.
+ */
+export async function runStrategist(
   visitorId: string,
   conversationId: string,
+  context: StrategistContext,
 ): Promise<void> {
   const visitor = await getVisitorById(visitorId);
   if (!visitor) return;
+  const conversation = await loadConversationById(conversationId);
 
   const { messages } = await loadRecentMessages(conversationId, 12);
   if (messages.length === 0) return;
@@ -192,18 +264,55 @@ export async function refreshVisitorMemory(
     ? (visitor.meta.interests as unknown[]).filter((item): item is string => typeof item === 'string')
     : [];
 
-  const facts = await extractVisitorFacts(transcript, {
+  const result = await evaluateDialog(transcript, {
     name: visitor.name,
     contacts: visitor.contacts,
     interests,
+    stage: conversation?.stage ?? 'greeting',
+    goal: context.goal,
+    goalText: context.goalText,
   });
-  if (!facts || factsAreEmpty(facts)) return;
+  if (!result) return;
 
-  const merged = mergeVisitorFacts(visitor, facts);
-  await updateVisitorProfile(visitorId, {
-    name: merged.name,
-    contacts: merged.contacts,
-    meta: merged.meta,
-    memory_digest: merged.memory_digest,
-  });
+  // 1) Visitor card (facts).
+  if (!factsAreEmpty(result.facts)) {
+    const merged = mergeVisitorFacts(visitor, result.facts);
+    await updateVisitorProfile(visitorId, {
+      name: merged.name,
+      contacts: merged.contacts,
+      meta: merged.meta,
+      memory_digest: merged.memory_digest,
+    });
+  }
+
+  if (!conversation) return;
+
+  // 2) Goal state: facts-based proof wins, otherwise the model's verdict.
+  const contacts = result.facts.contacts
+    ? { ...result.facts.contacts, ...visitor.contacts }
+    : visitor.contacts;
+  const achieved =
+    goalReachedByFacts(context.goal, contacts) || result.goalProgress === 'achieved';
+
+  if (achieved && conversation.outcome === 'in_progress') {
+    await updateConversationFields(conversationId, { outcome: 'goal_reached', stage: 'done' });
+    await recordEvent({
+      botId: conversation.botId,
+      visitorId,
+      conversationId,
+      type: 'goal_reached',
+      payload: { goal: context.goal },
+    });
+    return;
+  }
+
+  // 3) Stage transitions (skip terminal states).
+  if (conversation.outcome !== 'in_progress') return;
+  if (result.stage && result.stage !== conversation.stage) {
+    if (result.stage === 'lost') {
+      await updateConversationFields(conversationId, { stage: 'lost', outcome: 'lost' });
+    } else {
+      await updateConversationFields(conversationId, { stage: result.stage });
+    }
+  }
 }

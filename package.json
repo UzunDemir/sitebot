@@ -13,6 +13,7 @@
     "smoke:embed": "node scripts/smoke-embed.mjs",
     "smoke:memory": "node scripts/smoke-memory.mjs",
     "smoke:visitor": "node scripts/smoke-visitor.mjs",
+    "smoke:nudge": "node scripts/smoke-nudge.mjs",
     "eval": "node scripts/eval-run.mjs"
   },
   "dependencies": {

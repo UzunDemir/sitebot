@@ -92,6 +92,13 @@ export async function ensureVisitor(botId: string, visitorKey: string): Promise<
   }
 }
 
+/** Upsert + full card read for one request (chat route memory block). */
+export async function ensureVisitorRow(botId: string, visitorKey: string): Promise<VisitorRow | null> {
+  const id = await ensureVisitor(botId, visitorKey);
+  if (!id) return null;
+  return getVisitorById(id);
+}
+
 /** Link a conversation to its visitor (first link wins, no-op afterwards). */
 export async function attachConversationToVisitor(
   conversationId: string,
@@ -170,6 +177,36 @@ export async function updateVisitorProfile(
   } catch (err) {
     console.warn('[visitors] update error:', err);
     return false;
+  }
+}
+
+/**
+ * Best-effort funnel event (sql/0003): session_start, nudge_sent, stop_request…
+ * Silently skipped when the events table is missing.
+ */
+export async function recordEvent(input: {
+  botId: string;
+  visitorId?: string | null;
+  conversationId?: string | null;
+  type: string;
+  payload?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    const supabase = getSupabase();
+    const payload =
+      input.payload && JSON.stringify(input.payload).length <= 2000 ? input.payload : {};
+    const { error } = await supabase.from('events').insert({
+      bot_id: input.botId,
+      visitor_id: input.visitorId ?? null,
+      conversation_id: input.conversationId ?? null,
+      type: input.type,
+      payload,
+    });
+    if (error && !isMissingRelationError(error)) {
+      console.warn('[visitors] event failed:', error.message);
+    }
+  } catch (err) {
+    console.warn('[visitors] event error:', err);
   }
 }
 

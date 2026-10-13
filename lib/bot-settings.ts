@@ -1,13 +1,51 @@
 /**
  * Behavior settings (the "logic" layer): stored in bots.settings (jsonb),
- * sanitized here, applied by the chat route and the prompt builder.
+ * sanitized here, applied by the chat route, the prompt builder and the
+ * nudge engine.
  *
  * The settings column arrives with sql/0002_settings.sql; until then the
  * code runs on defaults (isMissingColumnError detects the old schema).
  */
 
 export type BotChattiness = 'strict' | 'friendly' | 'proactive' | 'initiator';
-export type BotGoal = 'none' | 'call' | 'purchase' | 'phone' | 'birthday' | 'custom';
+
+/** 10 goal presets (+ none / custom). «Достигнуто» judges the strategist. */
+export type BotGoal =
+  | 'none'
+  | 'phone'
+  | 'messenger'
+  | 'call'
+  | 'booking'
+  | 'demo'
+  | 'purchase'
+  | 'order'
+  | 'quote'
+  | 'review'
+  | 'birthday'
+  | 'custom';
+
+export type BotNudges = {
+  /** Max touches in a row (0..5). */
+  attempts?: number;
+  /** Silence before touch #1, seconds (15..600). */
+  firstDelaySec?: number;
+  /** Gap before touch #2; grows ×2 per further touch (60..86400). */
+  intervalSec?: number;
+};
+
+export type BotQuietHours = {
+  enabled?: boolean;
+  /** "HH:MM" local (visitor timezone). */
+  from?: string;
+  /** "HH:MM" local — the bot stays silent until this time. */
+  to?: string;
+};
+
+export type BotProactiveSettings = {
+  enabled?: boolean;
+  nudges?: BotNudges;
+  quietHours?: BotQuietHours;
+};
 
 export type BotSettings = {
   /** Max answer length in tokens (120..2400). */
@@ -18,12 +56,18 @@ export type BotSettings = {
   historyDepth?: number;
   /** Conversation style. */
   chattiness?: BotChattiness;
-  /** Conversation goal the bot gently drives towards. */
+  /** Conversation goal the bot drives towards. */
   goal?: BotGoal;
   /** Free-form goal description (goal === 'custom', <= 200 chars). */
   goalText?: string;
-  /** Sales pressure: 0 off, 1 moderate, 2 active (with hard guardrails). */
+  /** Legacy sales pressure (0|1|2); mapped to aggressiveness 0/50/80. */
   salesPressure?: 0 | 1 | 2;
+  /** Sales aggressiveness 0..100 (step 5). */
+  aggressiveness?: number;
+  /** Tone 0..100 (0 friendly ↔ 100 formal); 50 = neutral. */
+  tone?: number;
+  /** Proactive touches: nudge engine + quiet hours (Ф3). */
+  proactive?: BotProactiveSettings;
 };
 
 export const BOT_SETTINGS_DEFAULTS = {
@@ -34,10 +78,32 @@ export const BOT_SETTINGS_DEFAULTS = {
   goal: 'none' as BotGoal,
   goalText: '',
   salesPressure: 0 as 0 | 1 | 2,
+  aggressiveness: 40,
+  tone: 50,
+  proactive: {
+    enabled: true,
+    nudges: { attempts: 2, firstDelaySec: 45, intervalSec: 300 },
+    quietHours: { enabled: false, from: '21:00', to: '09:00' },
+  },
 };
 
 const CHATTINESS_VALUES: BotChattiness[] = ['strict', 'friendly', 'proactive', 'initiator'];
-const GOAL_VALUES: BotGoal[] = ['none', 'call', 'purchase', 'phone', 'birthday', 'custom'];
+const GOAL_VALUES: BotGoal[] = [
+  'none',
+  'phone',
+  'messenger',
+  'call',
+  'booking',
+  'demo',
+  'purchase',
+  'order',
+  'quote',
+  'review',
+  'birthday',
+  'custom',
+];
+
+const HHMM = /^\d{1,2}:\d{2}$/;
 
 function intInRange(value: unknown, min: number, max: number): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
@@ -65,15 +131,80 @@ export function parseBotSettings(input: unknown): BotSettings {
   if (raw.salesPressure === 0 || raw.salesPressure === 1 || raw.salesPressure === 2) {
     out.salesPressure = raw.salesPressure;
   }
+  out.aggressiveness = intInRange(raw.aggressiveness, 0, 100);
+  out.tone = intInRange(raw.tone, 0, 100);
+
+  if (raw.proactive && typeof raw.proactive === 'object' && !Array.isArray(raw.proactive)) {
+    const p = raw.proactive as Record<string, unknown>;
+    const proactive: BotProactiveSettings = {};
+    if (typeof p.enabled === 'boolean') proactive.enabled = p.enabled;
+
+    if (p.nudges && typeof p.nudges === 'object' && !Array.isArray(p.nudges)) {
+      const n = p.nudges as Record<string, unknown>;
+      const nudges: BotNudges = {};
+      const attempts = intInRange(n.attempts, 0, 5);
+      if (attempts !== undefined) nudges.attempts = attempts;
+      const first = intInRange(n.firstDelaySec, 15, 600);
+      if (first !== undefined) nudges.firstDelaySec = first;
+      const interval = intInRange(n.intervalSec, 60, 86400);
+      if (interval !== undefined) nudges.intervalSec = interval;
+      proactive.nudges = nudges;
+    }
+
+    if (p.quietHours && typeof p.quietHours === 'object' && !Array.isArray(p.quietHours)) {
+      const q = p.quietHours as Record<string, unknown>;
+      const quietHours: BotQuietHours = {};
+      if (typeof q.enabled === 'boolean') quietHours.enabled = q.enabled;
+      if (typeof q.from === 'string' && HHMM.test(q.from.trim())) quietHours.from = q.from.trim();
+      if (typeof q.to === 'string' && HHMM.test(q.to.trim())) quietHours.to = q.to.trim();
+      proactive.quietHours = quietHours;
+    }
+
+    out.proactive = proactive;
+  }
 
   return out;
 }
 
-/** True when a PostgREST error means the settings column does not exist yet. */
+/** Sales aggressiveness with the legacy salesPressure mapping. */
+export function effectiveAggressiveness(settings: BotSettings): number {
+  if (typeof settings.aggressiveness === 'number') return settings.aggressiveness;
+  if (settings.salesPressure === 1) return 50;
+  if (settings.salesPressure === 2) return 80;
+  if (settings.salesPressure === 0) return 0;
+  return BOT_SETTINGS_DEFAULTS.aggressiveness;
+}
+
+/** Fully resolved proactive config (settings layered over defaults). */
+export type EffectiveProactive = {
+  enabled: boolean;
+  attempts: number;
+  firstDelaySec: number;
+  intervalSec: number;
+  quietHours: { enabled: boolean; from: string; to: string };
+};
+
+export function effectiveProactive(settings: BotSettings): EffectiveProactive {
+  const d = BOT_SETTINGS_DEFAULTS.proactive;
+  const p = settings.proactive ?? {};
+  return {
+    enabled: p.enabled ?? d.enabled,
+    attempts: p.nudges?.attempts ?? d.nudges.attempts,
+    firstDelaySec: p.nudges?.firstDelaySec ?? d.nudges.firstDelaySec,
+    intervalSec: p.nudges?.intervalSec ?? d.nudges.intervalSec,
+    quietHours: {
+      enabled: p.quietHours?.enabled ?? d.quietHours.enabled,
+      from: p.quietHours?.from ?? d.quietHours.from,
+      to: p.quietHours?.to ?? d.quietHours.to,
+    },
+  };
+}
+
+/** True when a PostgREST error means a column does not exist yet (old schema). */
 export function isMissingColumnError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const code = (err as { code?: unknown }).code;
   if (code === '42703') return true;
   const message = (err as { message?: unknown }).message;
-  return typeof message === 'string' && /column .*settings.* does not exist/i.test(message);
+  return typeof message === 'string' && /column .* does not exist/i.test(message);
 }

@@ -16,9 +16,10 @@
 
 import { connection } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
-import { isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
+import { isMissingColumnError, effectiveProactive, parseBotSettings } from '@/lib/bot-settings';
 import {
   getConversationId,
+  loadConversationById,
   loadRatings,
   loadRecentMessages,
   type StoredMessage,
@@ -123,6 +124,16 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: 'not_found' }, { status: 404 });
     }
 
+    const settings = parseBotSettings(bot.settings);
+    const proactive = effectiveProactive(settings);
+    const nudges = {
+      enabled: proactive.enabled,
+      attempts: proactive.attempts,
+      firstDelaySec: proactive.firstDelaySec,
+      intervalSec: proactive.intervalSec,
+      quietHours: proactive.quietHours,
+    };
+
     const conversationId = await getConversationId(bot.id, sessionKey);
     if (!conversationId) {
       const visitorRow = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
@@ -130,6 +141,9 @@ export async function GET(req: Request): Promise<Response> {
         conversationId: null,
         messages: [],
         hasMore: false,
+        nudges,
+        nudgesSent: 0,
+        outcome: 'in_progress',
         visitor: visitorRow ? { name: visitorRow.name, returning: false } : null,
       });
     }
@@ -138,7 +152,8 @@ export async function GET(req: Request): Promise<Response> {
     const ratings = await loadRatings(
       messages.filter((message) => message.role === 'assistant').map((message) => message.id),
     );
-    const showSources = parseBotSettings(bot.settings).showSources !== false;
+    const showSources = settings.showSources !== false;
+    const conversationMeta = await loadConversationById(conversationId);
 
     // Welcome-back hint for the widget: who is returning (visitor card)
     // and whether a stored dialog exists («с возвращением» bubble).
@@ -150,6 +165,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({
       conversationId,
       hasMore,
+      nudges,
+      nudgesSent: conversationMeta?.nudgesSent ?? 0,
+      outcome: conversationMeta?.outcome ?? 'in_progress',
       visitor,
       messages: messages.map((message) =>
         toUIMessage(message, ratings, conversationId, showSources),

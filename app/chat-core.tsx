@@ -32,6 +32,15 @@ type SourceItem = {
 
 type FeedbackInfo = { messageId: number | null; rating?: number };
 
+/** Nudge config delivered by GET /api/chat/history (Ф3). */
+type NudgesConfig = {
+  enabled: boolean;
+  attempts: number;
+  firstDelaySec: number;
+  intervalSec: number;
+  quietHours: { enabled: boolean; from: string; to: string };
+};
+
 function messageText(parts: unknown[]): string {
   return parts
     .map((part) => {
@@ -110,8 +119,14 @@ export function Chat({
   const [visitorKey, setVisitorKey] = useState('');
   const [visitor, setVisitor] = useState<{ name: string | null; returning: boolean } | null>(null);
   const [forget, setForget] = useState<0 | 1 | 2>(0);
+  const [liveNudge, setLiveNudge] = useState<string | null>(null);
   const [inFrame, setInFrame] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  // Dialog engine refs (survive effect re-runs; read at tick time).
+  const nudgesRef = useRef<NudgesConfig | null>(null);
+  const nudgesSentRef = useRef(0);
+  const outcomeRef = useRef('in_progress');
+  const hideTimerRef = useRef<number | null>(null);
 
   // Optional web font for the widget (link is scoped to this document).
   useEffect(() => {
@@ -200,6 +215,9 @@ export function Chat({
         const payload = (await res.json().catch(() => null)) as {
           messages?: unknown[];
           visitor?: { name?: unknown; returning?: unknown } | null;
+          nudges?: Partial<NudgesConfig> | null;
+          nudgesSent?: unknown;
+          outcome?: unknown;
         } | null;
         if (cancelled) return;
         const info = payload?.visitor;
@@ -209,6 +227,21 @@ export function Chat({
             returning: true,
           });
         }
+        // Dialog-engine state (Ф3): server-resolved config + counters.
+        const nudgesInfo = payload?.nudges;
+        if (nudgesInfo && typeof nudgesInfo === 'object') {
+          nudgesRef.current = {
+            enabled: nudgesInfo.enabled !== false,
+            attempts: typeof nudgesInfo.attempts === 'number' ? nudgesInfo.attempts : 0,
+            firstDelaySec:
+              typeof nudgesInfo.firstDelaySec === 'number' ? nudgesInfo.firstDelaySec : 45,
+            intervalSec: typeof nudgesInfo.intervalSec === 'number' ? nudgesInfo.intervalSec : 300,
+            quietHours:
+              nudgesInfo.quietHours ?? { enabled: false, from: '21:00', to: '09:00' },
+          };
+        }
+        if (typeof payload?.nudgesSent === 'number') nudgesSentRef.current = payload.nudgesSent;
+        if (typeof payload?.outcome === 'string') outcomeRef.current = payload.outcome;
         const restored = Array.isArray(payload?.messages) ? (payload.messages as UIMessage[]) : [];
         if (restored.length === 0) return;
         setMessages((current) => (current.length > 0 ? current : restored));
@@ -273,6 +306,128 @@ export function Chat({
 
   const busy = status === 'submitted' || status === 'streaming';
 
+  // --- Dialog engine (Ф3): proactive touches for a silent visitor.
+  // The server is the single source of truth (enabled, DND, quiet hours,
+  // attempt limit, timing, goal state); the client only displays what the
+  // server allows — in-feed and, when embedded, via the loader teaser.
+  // Hard stops: an answer from the visitor (submit resets the engine),
+  // quiet hours / DND / closed dialogs (server denials stop the loop).
+  const busyRef = useRef(false);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  useEffect(() => {
+    if (!sessionKey || !visitorKey) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const scheduleHide = (afterSeconds: number) => {
+      if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = window.setTimeout(() => {
+        setLiveNudge(null);
+        hideTimerRef.current = null;
+      }, Math.max(20_000, afterSeconds * 1000));
+    };
+
+    const arm = (delayMs: number) => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void tick();
+      }, Math.max(5_000, delayMs));
+    };
+
+    async function tick(): Promise<void> {
+      if (cancelled) return;
+      const config = nudgesRef.current;
+      if (!config) {
+        arm(20_000); // config arrives with the history fetch
+        return;
+      }
+      if (!config.enabled || config.attempts <= 0) return; // hard stop
+      if (nudgesSentRef.current >= config.attempts) return;
+      if (outcomeRef.current !== 'in_progress') return;
+      if (busyRef.current) {
+        arm(25_000);
+        return;
+      }
+      if (document.visibilityState === 'hidden') {
+        arm(30_000);
+        return;
+      }
+
+      let tz = '';
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+      } catch {
+        // no timezone — the server falls back to timezone-less checks
+      }
+
+      try {
+        const res = await fetch('/api/chat/nudge', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ botKey: bot.publicKey, sessionKey, visitorKey, tz }),
+        });
+        if (cancelled) return;
+        const payload = (await res.json().catch(() => null)) as {
+          allowed?: boolean;
+          reason?: string;
+          text?: string;
+          nudgeNumber?: number;
+          retryAfterMs?: number;
+          nextAllowedAt?: string;
+        } | null;
+
+        if (payload?.allowed === true && typeof payload.text === 'string' && payload.text) {
+          const attempt = payload.nudgeNumber ?? nudgesSentRef.current + 1;
+          nudgesSentRef.current = attempt;
+          setLiveNudge(payload.text);
+          scheduleHide(config.intervalSec);
+          try {
+            window.parent.postMessage({ type: 'sitebot:nudge', text: payload.text }, '*');
+          } catch {
+            // not embedded — the in-feed bubble is enough
+          }
+          const gapSec = attempt <= 0 ? config.firstDelaySec : config.intervalSec * Math.pow(2, attempt - 1);
+          arm(gapSec * 1000);
+          return;
+        }
+
+        switch (payload?.reason) {
+          case 'too_early':
+            arm(payload.retryAfterMs ?? 30_000);
+            return;
+          case 'quiet_hours': {
+            const until = payload.nextAllowedAt
+              ? new Date(payload.nextAllowedAt).getTime() - Date.now()
+              : 10 * 60_000;
+            arm(until);
+            return;
+          }
+          case 'limit':
+          case 'dnd':
+          case 'closed':
+          case 'disabled':
+          case 'no_dialog':
+            return; // hard stop until the next page load
+          default:
+            arm(60_000);
+            return;
+        }
+      } catch {
+        arm(5 * 60_000);
+      }
+    }
+
+    arm(20_000);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [sessionKey, visitorKey, bot.publicKey]);
+
   const errorText = (() => {
     if (!error) return null;
     try {
@@ -289,6 +444,14 @@ export function Chat({
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
+    // An answer cancels the pending nudge (the server resets its counter too).
+    setLiveNudge(null);
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    nudgesSentRef.current = 0;
+    outcomeRef.current = 'in_progress';
     sendMessage({ text });
     setInput('');
   }
@@ -309,6 +472,9 @@ export function Chat({
     sessionStartedRef.current = false;
     setMessages([]);
     setVisitor(null);
+    setLiveNudge(null);
+    nudgesSentRef.current = 0;
+    outcomeRef.current = 'in_progress';
     setSessionKey(fresh.sessionKey);
     setVisitorKey(fresh.visitorKey);
     setForget(2);
@@ -474,6 +640,34 @@ export function Chat({
             </div>
           );
         })}
+
+        {liveNudge && !busy && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] space-y-1">
+              <div
+                className="px-4 py-3 text-sm whitespace-pre-wrap"
+                style={{
+                  backgroundColor: p.botBubbleBg,
+                  color: p.botBubbleText,
+                  borderRadius: bubbleRadius,
+                  borderBottomLeftRadius: 6,
+                  outline: `1px dashed ${p.border}`,
+                  outlineOffset: 2,
+                }}
+              >
+                {liveNudge}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLiveNudge(null)}
+                className="pl-1 text-[10px] opacity-60 transition-opacity hover:opacity-100"
+                style={{ color: p.subtleText }}
+              >
+                скрыть
+              </button>
+            </div>
+          </div>
+        )}
 
         {status === 'submitted' && (
           <div className="flex justify-start">

@@ -1,10 +1,11 @@
 /**
  * Prompt assembly: the bot's own prompt + behavior directives
- * (chattiness, goal, sales pressure, sources) + grounded context.
+ * (chattiness, goal, aggressiveness, tone, visitor memory, sources)
+ * + grounded context.
  */
 
 import type { RetrievedChunk } from './retrieval';
-import type { BotChattiness, BotGoal, BotSettings } from './bot-settings';
+import { effectiveAggressiveness, type BotChattiness, type BotGoal, type BotSettings } from './bot-settings';
 
 const CHATTINESS_RULES: Record<BotChattiness, string> = {
   strict:
@@ -18,18 +19,41 @@ const CHATTINESS_RULES: Record<BotChattiness, string> = {
 };
 
 const GOAL_RULES: Record<Exclude<BotGoal, 'none' | 'custom'>, string> = {
-  call: 'Цель диалога: договориться о звонке — в подходящий момент предложи оставить номер телефона.',
-  purchase: 'Цель диалога: помочь с покупкой — доведи клиента до оформления заказа.',
   phone: 'Цель диалога: получить номер телефона клиента для связи (предложи в подходящий момент).',
+  messenger:
+    'Цель диалога: перевести общение в мессенджер (Telegram/WhatsApp) — в подходящий момент предложи продолжить там.',
+  call: 'Цель диалога: договориться о звонке — в подходящий момент предложи оставить номер телефона.',
+  booking: 'Цель диалога: записать посетителя на визит/примерку — предложи выбрать удобное время.',
+  demo: 'Цель диалога: договориться о коротком демо/показе — предложи удобный формат и время.',
+  purchase: 'Цель диалога: помочь с покупкой — доведи клиента до оформления заказа.',
+  order: 'Цель диалога: оформить заказ — уточни позицию и предложи оформить прямо сейчас.',
+  quote:
+    'Цель диалога: подготовить расчёт/предложение — уточни параметры и предложи оставить контакт для сметы.',
+  review: 'Цель диалога: получить короткий отзыв — попроси его после того, как помог.',
   birthday:
     'Цель диалога: аккуратно, после ответа на вопрос клиента, узнать дату рождения для поздравлений.',
 };
 
-const PRESSURE_RULES: Record<0 | 1 | 2, string> = {
-  0: 'Продажи: без давления — упоминай товары/услуги только если это уместно.',
-  1: 'Продажи: умеренно предлагай подходящие товары/услуги после ответа на вопрос.',
-  2: 'Продажи: активно предлагай варианты и завершение покупки. Жёсткие ограничения: не давить после двух явных отказов, не выдумывать выгоды и скидки, не манипулировать.',
+/** Short labels for the nudge prompt («Цель диалога: ...»). */
+const GOAL_SHORT: Record<Exclude<BotGoal, 'none' | 'custom'>, string> = {
+  phone: 'получить телефон посетителя',
+  messenger: 'перевести переписку в мессенджер',
+  call: 'договориться о звонке',
+  booking: 'записать на визит/примерку',
+  demo: 'договориться о демо',
+  purchase: 'довести до покупки',
+  order: 'оформить заказ',
+  quote: 'подготовить расчёт',
+  review: 'получить отзыв',
+  birthday: 'узнать день рождения',
 };
+
+export function goalLabelText(settings: BotSettings): string | null {
+  const goal = settings.goal;
+  if (!goal || goal === 'none') return null;
+  if (goal === 'custom') return settings.goalText?.trim() || null;
+  return GOAL_SHORT[goal] ?? null;
+}
 
 function goalRule(settings: BotSettings): string | null {
   const goal = settings.goal;
@@ -41,10 +65,72 @@ function goalRule(settings: BotSettings): string | null {
   return GOAL_RULES[goal];
 }
 
+/** Aggressiveness scale 0..100 → behavior directive (with hard guardrails). */
+function aggressivenessRule(value: number): string {
+  if (value <= 20) {
+    return 'Продажи (шкала 0–100, низкая): без давления — упоминай товары/услуги только если это уместно.';
+  }
+  if (value <= 45) {
+    return 'Продажи (шкала 0–100, умеренная): после ответа на вопрос можешь один раз мягко предложить подходящий вариант.';
+  }
+  if (value <= 70) {
+    return 'Продажи (шкала 0–100, выше средней): веди посетителя к цели — в ответе делай один шаг: уточни потребность или предложи следующий шаг.';
+  }
+  return 'Продажи (шкала 0–100, высокая): активно веди к цели, предлагай завершение и контакт. Жёсткие ограничения: не давить после двух явных отказов, не выдумывать выгоды и скидки, не манипулировать.';
+}
+
+function toneRule(value: number): string | null {
+  if (value >= 70) return 'Тон: официальный, сдержанный — «вы», без сленга и эмодзи.';
+  if (value <= 30) return 'Тон: дружеский, тёплый — допустимы лёгкие разговорные формулировки, без панибратства.';
+  return null;
+}
+
+/** Visitor memory (sql/0003): injected so the bot never re-asks known facts. */
+export type VisitorMemoryContext = {
+  name: string | null;
+  contacts: Record<string, string>;
+  interests: string[];
+  digest: string;
+  stage: string;
+  returning: boolean;
+};
+
+const STAGE_HINTS: Record<string, string> = {
+  greeting: 'приветствие — поздоровайся и выясни, что нужно посетителю',
+  qualification: 'квалификация — выясни потребность одним уточняющим вопросом',
+  offer: 'предложение — предложи конкретный вариант под потребность',
+  objections: 'возражения — сними возражение честно, без давления',
+  close: 'закрытие — предложи следующий шаг (оформление, контакт, звонок)',
+  followup: 'дожим — посетитель молчал: мягко напомни о себе простым вопросом',
+  done: 'цель достигнута — закрепи договорённость',
+  lost: 'диалог не сложился — отвечай нейтрально',
+};
+
+function memoryBlock(memory: VisitorMemoryContext): string | null {
+  const lines: string[] = [];
+  if (memory.name) lines.push(`Имя: ${memory.name}`);
+  const contacts = Object.entries(memory.contacts)
+    .slice(0, 5)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('; ');
+  if (contacts) lines.push(`Контакты: ${contacts}`);
+  if (memory.interests.length > 0) lines.push(`Интересы: ${memory.interests.slice(0, 5).join(', ')}`);
+  if (memory.digest) lines.push(`Заметки: ${memory.digest.slice(0, 600)}`);
+  const stage = STAGE_HINTS[memory.stage];
+  if (stage) lines.push(`Стадия диалога: ${stage}`);
+  if (lines.length === 0) return null;
+
+  const header = memory.returning
+    ? 'Посетитель уже общался с ботом ранее. Память о нём (не переспрашивай известное):'
+    : 'Память о посетителе:';
+  return [header, ...lines.map((line) => `- ${line}`)].join('\n');
+}
+
 export function buildSystemPrompt(
   botSystemPrompt: string,
   sources: RetrievedChunk[],
   settings: BotSettings = {},
+  memory?: VisitorMemoryContext,
 ): string {
   const context = sources
     .map((source, index) => {
@@ -63,7 +149,11 @@ export function buildSystemPrompt(
   if (chattiness) blocks.push(chattiness);
   const goal = goalRule(settings);
   if (goal) blocks.push(goal);
-  blocks.push(PRESSURE_RULES[settings.salesPressure ?? 0]);
+  blocks.push(aggressivenessRule(effectiveAggressiveness(settings)));
+  const tone = toneRule(settings.tone ?? 50);
+  if (tone) blocks.push(tone);
+  const memoryText = memory ? memoryBlock(memory) : null;
+  if (memoryText) blocks.push(memoryText);
 
   blocks.push(
     [

@@ -21,9 +21,22 @@ import { getSupabase } from '@/lib/supabase';
 import { resolveModel } from '@/lib/models';
 import { hybridSearch } from '@/lib/retrieval';
 import { buildSystemPrompt } from '@/lib/prompts';
-import { ensureConversation, saveUserMessage, saveAssistantMessage } from '@/lib/chat-store';
-import { attachConversationToVisitor, ensureVisitor } from '@/lib/visitors';
-import { refreshVisitorMemory } from '@/lib/visitor-memory';
+import {
+  ensureConversation,
+  loadConversationById,
+  saveUserMessage,
+  saveAssistantMessage,
+  updateConversationFields,
+} from '@/lib/chat-store';
+import {
+  attachConversationToVisitor,
+  ensureVisitorRow,
+  recordEvent,
+  updateVisitorProfile,
+  type VisitorRow,
+} from '@/lib/visitors';
+import { runStrategist } from '@/lib/visitor-memory';
+import { isStopRequest, STOP_REPLY } from '@/lib/nudge';
 import { estimateCostUsd } from '@/lib/pricing';
 import { BOT_SETTINGS_DEFAULTS, isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
 
@@ -164,12 +177,9 @@ export async function POST(req: Request): Promise<Response> {
     const depth = settings.historyDepth ?? BOT_SETTINGS_DEFAULTS.historyDepth;
     const history = depth > 0 && messages.length > depth ? messages.slice(-depth) : messages;
 
-    // --- retrieval
-    const sources = await hybridSearch(bot.id, query, bot.top_k ?? 6);
-    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings);
-    const showSources = settings.showSources !== false;
-
-    // --- persistence (best effort for the user message)
+    // --- persistence + visitor card (sql/0003), before prompts: the memory
+    // block and the stop-word handling both need the card. Best effort —
+    // the chat works without the migration.
     const conversationId = sessionKey ? await ensureConversation(bot.id, sessionKey) : null;
     if (conversationId) {
       try {
@@ -179,13 +189,85 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    // --- visitor card (sql/0003): link the dialog, refresh memory after
-    // the response. Best effort — the chat works without the migration.
     let visitorId: string | null = null;
+    let visitorRow: VisitorRow | null = null;
     if (visitorKey && conversationId) {
-      visitorId = await ensureVisitor(bot.id, visitorKey);
+      visitorRow = await ensureVisitorRow(bot.id, visitorKey);
+      visitorId = visitorRow?.id ?? null;
       if (visitorId) await attachConversationToVisitor(conversationId, visitorId);
     }
+    const conversationMeta = conversationId ? await loadConversationById(conversationId) : null;
+
+    // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
+    if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
+      await recordEvent({
+        botId: bot.id,
+        visitorId,
+        conversationId,
+        type: 'nudge_answered',
+        payload: { nudges: conversationMeta.nudgesSent },
+      });
+      await updateConversationFields(conversationId, { nudges_sent: 0 });
+    }
+
+    // --- стоп-слова: DND навсегда, вежливый ответ без LLM и без поиска.
+    if (isStopRequest(query)) {
+      if (visitorId) await updateVisitorProfile(visitorId, { do_not_disturb: true });
+      if (conversationId) await updateConversationFields(conversationId, { outcome: 'stopped' });
+      await recordEvent({ botId: bot.id, visitorId, conversationId, type: 'stop_request' });
+
+      const stopStream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: 'start' });
+          writer.write({ type: 'start-step' });
+          writer.write({ type: 'text-start', id: 'stop-reply' });
+          writer.write({ type: 'text-delta', id: 'stop-reply', delta: STOP_REPLY });
+          writer.write({ type: 'text-end', id: 'stop-reply' });
+          if (conversationId) {
+            try {
+              const messageId = await saveAssistantMessage(conversationId, {
+                content: STOP_REPLY,
+                citations: [],
+                model: bot.model_id,
+                inputTokens: 0,
+                outputTokens: 0,
+                costUsd: 0,
+                latencyMs: Date.now() - startedAt,
+              });
+              writer.write({
+                type: 'data-feedback',
+                id: 'feedback',
+                data: { messageId, conversationId },
+              });
+            } catch (err) {
+              console.warn('[chat] failed to persist stop reply:', err);
+            }
+          }
+          writer.write({ type: 'finish-step' });
+          writer.write({ type: 'finish' });
+        },
+      });
+      return createUIMessageStreamResponse({ stream: stopStream });
+    }
+
+    // --- retrieval + grounded prompt (with the visitor memory block)
+    const sources = await hybridSearch(bot.id, query, bot.top_k ?? 6);
+    const memory = visitorRow
+      ? {
+          name: visitorRow.name,
+          contacts: visitorRow.contacts,
+          interests: Array.isArray(visitorRow.meta.interests)
+            ? (visitorRow.meta.interests as unknown[]).filter(
+                (item): item is string => typeof item === 'string',
+              )
+            : [],
+          digest: visitorRow.memory_digest,
+          stage: conversationMeta?.stage ?? 'greeting',
+          returning: Boolean(visitorRow.name || visitorRow.memory_digest),
+        }
+      : undefined;
+    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory);
+    const showSources = settings.showSources !== false;
 
     // --- generation
     const result = streamText({
@@ -263,15 +345,19 @@ export async function POST(req: Request): Promise<Response> {
       },
     });
 
-    // Dialog memory (best effort, after the response is sent): extract
-    // facts from the finished exchange and update the visitor card.
-    const memoryVisitorId = visitorId;
-    if (memoryVisitorId && conversationId) {
+    // Dialog strategist (best effort, after the response is sent): facts,
+    // dialog stage and goal state for the visitor card.
+    const strategistVisitorId = visitorId;
+    if (strategistVisitorId && conversationId) {
+      const strategistContext = {
+        goal: settings.goal ?? ('none' as const),
+        goalText: settings.goalText ?? '',
+      };
       after(async () => {
         try {
-          await refreshVisitorMemory(memoryVisitorId, conversationId);
+          await runStrategist(strategistVisitorId, conversationId, strategistContext);
         } catch (err) {
-          console.warn('[chat] visitor memory refresh failed:', err);
+          console.warn('[chat] strategist failed:', err);
         }
       });
     }
