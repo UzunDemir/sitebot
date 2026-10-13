@@ -138,6 +138,25 @@ try {
   );
   if (!botId || !botKey) throw new Error('в базе нет ни одного бота — сначала npm run seed');
 
+  // 2b) settings round-trip (logic layer)
+  const originalSettings = activeBot?.settings ?? {};
+  const settingsRes = await fetch(`${BASE}/api/admin/bots/${botId}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ settings: { maxOutputTokens: 500, showSources: true, goal: 'none' } }),
+  });
+  const settingsJson = await settingsRes.json().catch(() => null);
+  check(
+    'PATCH settings (логика) сохраняется',
+    settingsRes.ok && settingsJson?.bot?.settings?.maxOutputTokens === 500,
+    settingsJson?.bot?.settings ? `maxOutputTokens=${settingsJson.bot.settings.maxOutputTokens}` : `HTTP ${settingsRes.status}`,
+  );
+  await fetch(`${BASE}/api/admin/bots/${botId}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ settings: originalSettings }),
+  });
+
   // 3) upload a fresh document
   const form = new FormData();
   form.append('botId', botId);

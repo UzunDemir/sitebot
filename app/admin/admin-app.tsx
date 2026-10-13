@@ -2,6 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WidgetColors, WidgetTheme } from '@/lib/widget-theme';
+import {
+  BOT_SETTINGS_DEFAULTS,
+  type BotChattiness,
+  type BotGoal,
+  type BotSettings,
+} from '@/lib/bot-settings';
+
+const CHANNEL_CARDS: Array<{ name: string; status: string; note: string }> = [
+  { name: 'Telegram', status: 'В разработке', note: 'Бот в мессенджере — первый канал для исходящих сообщений (в т.ч. поздравлений).' },
+  { name: 'WhatsApp Business', status: 'В планах', note: 'Через Meta Business API (нужна верификация бизнеса).' },
+  { name: 'VK', status: 'В планах', note: 'Сообщения сообщества через Callback API.' },
+  { name: 'API и приложения', status: 'В планах', note: 'REST + подписанная идентичность клиента для нативных приложений.' },
+];
 
 const THEME_COLOR_FIELDS: Array<{ key: keyof WidgetColors; label: string }> = [
   { key: 'headerBg', label: 'Фон шапки' },
@@ -27,6 +40,7 @@ type Bot = {
   is_active: boolean;
   theme: WidgetTheme | null;
   allowed_origins: string[] | null;
+  settings: BotSettings | null;
   created_at: string;
 };
 
@@ -381,7 +395,12 @@ function BotSettings({
     allowed_origins: (bot.allowed_origins ?? []).join('\n'),
   });
   const [theme, setTheme] = useState<WidgetTheme>(bot.theme ?? {});
+  const [settings, setSettings] = useState<BotSettings>(bot.settings ?? {});
+  const [tab, setTab] = useState<'ui' | 'logic' | 'channels'>('ui');
+  const [snippetCopied, setSnippetCopied] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const embedSnippet = `<script src="${typeof window !== 'undefined' ? window.location.origin : ''}/loader.js?v=10" data-bot="${bot.public_key}" async></script>`;
 
   function setThemeField<K extends keyof WidgetTheme>(key: K, value: WidgetTheme[K]) {
     setTheme((prev) => ({ ...prev, [key]: value }));
@@ -389,6 +408,10 @@ function BotSettings({
 
   function setThemeColor(key: keyof WidgetColors, value: string) {
     setTheme((prev) => ({ ...prev, colors: { ...(prev.colors ?? {}), [key]: value } }));
+  }
+
+  function setSetting<K extends keyof BotSettings>(key: K, value: BotSettings[K]) {
+    setSettings((prev) => ({ ...prev, [key]: value }));
   }
 
   async function readImageFile(file: File): Promise<string | null> {
@@ -428,6 +451,7 @@ function BotSettings({
         thinking_enabled: form.thinking_enabled,
         is_active: form.is_active,
         theme,
+        settings,
         allowed_origins: form.allowed_origins,
       }),
     });
@@ -449,12 +473,35 @@ function BotSettings({
         <h2 className="text-sm font-semibold text-slate-900">Настройки бота</h2>
         <code
           className="rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-500"
-          title="Публичный ключ бота — понадобится виджету (фаза 3)"
+          title="Публичный ключ бота — понадобится виджету"
         >
           {bot.public_key}
         </code>
       </div>
 
+      <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+        {(
+          [
+            ['ui', 'Интерфейс'],
+            ['logic', 'Логика'],
+            ['channels', 'Каналы'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-medium transition-colors ${
+              tab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'logic' && (
+        <>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-1 text-xs text-slate-500">
           Название
@@ -522,6 +569,108 @@ function BotSettings({
         </div>
       </div>
 
+      <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+        <p className="text-xs font-semibold text-slate-600">Поведение</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-1 text-xs text-slate-500">
+            Размер ответа, токенов (120–2400)
+            <input
+              type="number"
+              min={120}
+              max={2400}
+              value={settings.maxOutputTokens ?? BOT_SETTINGS_DEFAULTS.maxOutputTokens}
+              onChange={(e) => setSetting('maxOutputTokens', Number(e.target.value) || BOT_SETTINGS_DEFAULTS.maxOutputTokens)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+            <span className="text-[10px] text-slate-400">
+              ≈ {Math.round(((settings.maxOutputTokens ?? BOT_SETTINGS_DEFAULTS.maxOutputTokens) * 2) / 100) * 100} знаков
+            </span>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Память диалога, сообщений (0 = вся история)
+            <input
+              type="number"
+              min={0}
+              max={50}
+              value={settings.historyDepth ?? BOT_SETTINGS_DEFAULTS.historyDepth}
+              onChange={(e) => setSetting('historyDepth', Math.max(0, Number(e.target.value) || 0))}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Общительность
+            <select
+              value={settings.chattiness ?? BOT_SETTINGS_DEFAULTS.chattiness}
+              onChange={(e) => setSetting('chattiness', e.target.value as BotChattiness)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="strict">Строго по вопросу</option>
+              <option value="friendly">Дружелюбно</option>
+              <option value="proactive">Проактивно</option>
+              <option value="initiator">Ведёт диалог сам</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Агрессивность продаж
+            <select
+              value={String(settings.salesPressure ?? 0)}
+              onChange={(e) => setSetting('salesPressure', Number(e.target.value) as 0 | 1 | 2)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="0">Без давления</option>
+              <option value="1">Умеренно предлагать</option>
+              <option value="2">Активно продавать</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-500">
+            Цель диалога
+            <select
+              value={settings.goal ?? 'none'}
+              onChange={(e) => setSetting('goal', e.target.value as BotGoal)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="none">Без цели</option>
+              <option value="call">Договориться о звонке</option>
+              <option value="purchase">Довести до покупки</option>
+              <option value="phone">Получить телефон</option>
+              <option value="birthday">Узнать день рождения</option>
+              <option value="custom">Своя цель…</option>
+            </select>
+          </label>
+          {settings.goal === 'custom' && (
+            <label className="space-y-1 text-xs text-slate-500">
+              Своя цель (до 200 символов)
+              <input
+                value={settings.goalText ?? ''}
+                maxLength={200}
+                onChange={(e) => setSetting('goalText', e.target.value)}
+                placeholder="Например: записать на примерку"
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+              />
+            </label>
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={settings.showSources !== false}
+            onChange={(e) => setSetting('showSources', e.target.checked)}
+            className="h-4 w-4"
+          />
+          Показывать источники в ответах (рекомендуется: проверяемость и доверие)
+        </label>
+        {settings.showSources === false && (
+          <p className="text-[11px] text-amber-700">
+            Источники скрыты: ответы станут «гладкими», но их нельзя будет проверить по базе, и
+            метрика цитирования в статистике перестанет расти.
+          </p>
+        )}
+      </div>
+        </>
+      )}
+
+      {tab === 'ui' && (
+        <>
       <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
         <p className="text-xs font-semibold text-slate-600">Виджет и внешний вид</p>
 
@@ -834,17 +983,6 @@ function BotSettings({
           )}
         </div>
 
-        <label className="block space-y-1 text-xs text-slate-500">
-          Сайты для встраивания (origin; пусто — разрешено везде)
-          <textarea
-            rows={3}
-            value={form.allowed_origins}
-            onChange={(e) => setForm({ ...form, allowed_origins: e.target.value })}
-            placeholder={'https://my-site.ru\nhttps://shop.example.com'}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
-          />
-        </label>
-
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <a
             href={`/embed/${bot.public_key}`}
@@ -857,7 +995,11 @@ function BotSettings({
           {uploadError && <span className="text-red-600">{uploadError}</span>}
         </div>
       </div>
+        </>
+      )}
 
+      {tab === 'logic' && (
+        <>
       <label className="block space-y-1 text-xs text-slate-500">
         Системный промпт
         <textarea
@@ -867,6 +1009,60 @@ function BotSettings({
           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
         />
       </label>
+        </>
+      )}
+
+      {tab === 'channels' && (
+        <>
+          <div className="space-y-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+            <p className="text-xs font-semibold text-slate-600">Сайт (виджет) — активен</p>
+            <div className="rounded-xl bg-slate-900 px-4 py-3">
+              <code className="block overflow-x-auto text-[11px] leading-relaxed whitespace-pre text-slate-100">
+                {embedSnippet}
+              </code>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(embedSnippet).then(() => {
+                    setSnippetCopied(true);
+                    window.setTimeout(() => setSnippetCopied(false), 2000);
+                  });
+                }}
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+              >
+                Скопировать код
+              </button>
+              {snippetCopied && <span className="text-xs text-emerald-600">скопировано</span>}
+            </div>
+            <label className="block space-y-1 text-xs text-slate-500">
+              Сайты для встраивания (origin; пусто — разрешено везде)
+              <textarea
+                rows={3}
+                value={form.allowed_origins}
+                onChange={(e) => setForm({ ...form, allowed_origins: e.target.value })}
+                placeholder={'https://my-site.ru\nhttps://shop.example.com'}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {CHANNEL_CARDS.map((channel) => (
+              <div key={channel.name} className="rounded-xl border border-slate-100 bg-white p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-800">{channel.name}</p>
+                  <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-400">
+                    {channel.status}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">{channel.note}</p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="flex items-center gap-3">
         <button
