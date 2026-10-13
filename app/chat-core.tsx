@@ -205,22 +205,21 @@ export function Chat({
 
   const { messages, sendMessage, setMessages, status, error } = useChat({ transport });
 
-  // Dialog memory: restore the stored conversation for this bot + session so
-  // a reload (or a return visit) continues the dialog instead of starting
-  // over. The visitor card (sql/0003) supplies the welcome-back name.
-  // Best effort: a failed fetch never blocks the chat, and a dialog already
-  // on screen is never overwritten.
+  // Memory lives on the server: the dialog is stored per bot + session and
+  // the model reads it from the DB (the widget never replays the past chat —
+  // the feed starts clean). This fetch only supplies the welcome-back
+  // greeting (visitor card) and the dialog-engine state (Ф3). Best effort:
+  // a failed fetch never blocks the chat.
   useEffect(() => {
     if (!sessionKey || !visitorKey) return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(
-          `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}`,
+          `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}&limit=1`,
         );
         if (!res.ok) return;
         const payload = (await res.json().catch(() => null)) as {
-          messages?: unknown[];
           visitor?: { name?: unknown; returning?: unknown } | null;
           nudges?: Partial<NudgesConfig> | null;
           nudgesSent?: unknown;
@@ -249,17 +248,14 @@ export function Chat({
         }
         if (typeof payload?.nudgesSent === 'number') nudgesSentRef.current = payload.nudgesSent;
         if (typeof payload?.outcome === 'string') outcomeRef.current = payload.outcome;
-        const restored = Array.isArray(payload?.messages) ? (payload.messages as UIMessage[]) : [];
-        if (restored.length === 0) return;
-        setMessages((current) => (current.length > 0 ? current : restored));
       } catch {
-        // history is a bonus; ignore failures
+        // the welcome-back hint is a bonus; ignore failures
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [sessionKey, visitorKey, bot.publicKey, setMessages]);
+  }, [sessionKey, visitorKey, bot.publicKey]);
 
   // Funnel analytics (sql/0003): one session_start per page, then
   // page_hidden when the visitor leaves. Fire-and-forget — never blocks.

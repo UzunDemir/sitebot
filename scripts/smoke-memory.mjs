@@ -1,7 +1,9 @@
 /**
  * Memory acceptance test (Phase 1): a long dialog (20+ messages) must
  * remember a fact from its very beginning — including after a simulated
- * reload, when the client restores the dialog via GET /api/chat/history.
+ * reload with an EMPTY client: the past dialog is not re-sent, the server
+ * rebuilds the model context from the stored conversation (memory is
+ * server-side; the widget shows a fresh feed).
  *
  * Local mode (default): spawns `npm run start` (run `npm run build` first).
  * Remote mode: set SMOKE_BASE_URL.
@@ -188,27 +190,25 @@ try {
   check(`промежуточные ходы: ${fillersOk}/${FILLERS.length}`, fillersOk === FILLERS.length);
   check(`диалог набрал ${NEEDED_MESSAGES}+ сообщений`, dialog.length >= NEEDED_MESSAGES, `${dialog.length} шт.`);
 
-  // 3) «reload»: the client forgets, history comes from the DB
+  // 3) «reload»: виджет не показывает прошлую переписку, но беседа
+  // целиком лежит в БД (память серверная).
   const histRes = await fetch(
     `${BASE}/api/chat/history?botKey=${encodeURIComponent(bot.public_key)}&sessionKey=${encodeURIComponent(sessionKey)}`,
   );
   const histJson = await histRes.json().catch(() => null);
   const stored = Array.isArray(histJson?.messages) ? histJson.messages : [];
   check('/api/chat/history → 200', histRes.ok, `HTTP ${histRes.status}`);
-  check('история восстановлена целиком', stored.length >= NEEDED_MESSAGES, `${stored.length} сообщ.`);
+  check('беседа сохранена целиком', stored.length >= NEEDED_MESSAGES, `${stored.length} сообщ.`);
   check('в истории есть самое первое сообщение', JSON.stringify(stored[0]?.parts ?? []).includes(NAME));
   check('история содержит data-feedback (оценки доступны)', JSON.stringify(stored).includes('data-feedback'));
 
-  // 4) continue the dialog from the restored history
-  const restored = stored.map((message) => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts,
-  }));
-  const last = await ask(bot.public_key, sessionKey, restored, LAST_QUESTION);
+  // 4) «пустой» клиент отправляет только новый вопрос — контекст сервер
+  // собирает сам из БД, память не зависит от того, что показывает виджет.
+  const emptyClient = [];
+  const last = await ask(bot.public_key, sessionKey, emptyClient, LAST_QUESTION);
   check('после «перезагрузки»: ответ получен', last.ok, `HTTP ${last.status}`);
   check(
-    `бот помнит имя через ${stored.length}+ сообщений`,
+    `бот помнит имя через ${stored.length}+ сообщений (клиент пуст)`,
     last.answer.toLowerCase().includes(NAME.toLowerCase()),
     last.answer.replace(/\s+/g, ' ').slice(0, 160),
   );

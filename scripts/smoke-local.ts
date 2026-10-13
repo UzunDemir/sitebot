@@ -21,8 +21,10 @@ import {
   visitorStorageKey,
 } from '../lib/session-key';
 import {
+  appendDigestNote,
   factsAreEmpty,
   mergeVisitorFacts,
+  notesAreSimilar,
   sanitizeStrategistResult,
   sanitizeVisitorFacts,
 } from '../lib/visitor-memory';
@@ -237,6 +239,29 @@ function main(): void {
       console.log('  ✓ повторный факт не дублируется в дайджесте');
     } else {
       console.error(`❌ дайджест продублирован: ${mergedAgain.memory_digest}`);
+      failures += 1;
+    }
+
+    // digest: почти одинаковые записи схлопываются, новые — добавляются
+    let digest = '';
+    digest = appendDigestNote(
+      digest,
+      'Посетитель утверждает, что у него есть документация об ассистенте и цели дожать его; от контакта по магазину уклоняется.',
+    );
+    digest = appendDigestNote(
+      digest,
+      'Посетитель утверждает, что у него есть документация об ассистенте, и обвиняет в попытке дожать; от обсуждения магазина уходит.',
+    );
+    const digest2 = appendDigestNote(digest, 'Хочет пуховик к пятнице.');
+    if (
+      digest.split('\n').length === 1 &&
+      notesAreSimilar('Интересует доставка', 'интересует доставка!') &&
+      !notesAreSimilar('Интересует доставка', 'Хочет пуховик к пятнице') &&
+      digest2.split('\n').length === 2
+    ) {
+      console.log('  ✓ дайджест памяти: похожие записи не дублируются, новые добавляются');
+    } else {
+      console.error(`❌ дайджест: ${JSON.stringify({ digest, digest2 })}`);
       failures += 1;
     }
   }

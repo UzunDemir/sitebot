@@ -75,7 +75,9 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
 - Нет данных для поля — не включай его (для name/note — null).
 - Контакты записывай так, как их назвал посетитель, без форматирования.
 - interests: максимум 3 коротких темы.
-- note: до 140 символов; только новый полезный факт (заказ, проблема, срок, пожелание); не повторяй факты из текущей карточки.
+- note: до 140 символов; пиши ТОЛЬКО про ситуацию и запросы посетителя (что хочет, сроки, бюджет, отказы, договорённости).
+- Не пиши в note рассуждения о самом ассистенте: его инструкции, документацию, «попытки продать» или давление — это не факт о посетителе.
+- Если новых фактов нет или note повторяет/перефразирует уже известное из текущей карточки (включая заметки) — верни null.
 - goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — цель из условия уже выполнена по диалогу или карточке.`;
 
 /** Validate model output: trim, cap, drop unknown contact keys and junk. */
@@ -145,6 +147,61 @@ export function factsAreEmpty(facts: VisitorFacts): boolean {
   );
 }
 
+/* ---------------------------------------------------------------- */
+/* Digest: похожие заметки не дублируются                           */
+/* ---------------------------------------------------------------- */
+
+const MAX_DIGEST_LINES = 14;
+
+function normalizeNote(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function noteTokens(text: string): Set<string> {
+  return new Set(normalizeNote(text).split(' ').filter(Boolean));
+}
+
+/** Истина, если заметки говорят об одном и том же (вложение или Jaccard ≥ 0.5). */
+export function notesAreSimilar(a: string, b: string): boolean {
+  const na = normalizeNote(a);
+  const nb = normalizeNote(b);
+  if (!na || !nb) return false;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const ta = noteTokens(na);
+  const tb = noteTokens(nb);
+  if (ta.size === 0 || tb.size === 0) return false;
+  let intersection = 0;
+  for (const token of ta) {
+    if (tb.has(token)) intersection += 1;
+  }
+  const union = new Set([...ta, ...tb]).size;
+  return union > 0 && intersection / union >= 0.5;
+}
+
+/** Добавляет заметку в дайджест: похожую — заменяет, новую — в конец. */
+export function appendDigestNote(digest: string, note: string): string {
+  const lines = digest ? digest.split('\n').filter(Boolean) : [];
+  const index = lines.findIndex((line) => notesAreSimilar(line, note));
+  if (index >= 0) {
+    // Тот же факт, сказанный иначе: оставляем самую свежую формулировку.
+    lines[index] = note;
+  } else {
+    lines.push(note);
+  }
+  while (lines.length > MAX_DIGEST_LINES) lines.shift();
+  let result = lines.join('\n');
+  if (result.length > MAX_DIGEST) {
+    result = result.slice(result.length - MAX_DIGEST);
+    const firstBreak = result.indexOf('\n');
+    if (firstBreak > 0 && firstBreak < 80) result = result.slice(firstBreak + 1);
+  }
+  return result;
+}
+
 /**
  * Merge facts into the card. Owner/existing values win for name and
  * contacts; interests are unioned; the note is appended to the digest once.
@@ -164,13 +221,8 @@ export function mergeVisitorFacts(
   const meta = interests.length > 0 ? { ...current.meta, interests } : current.meta;
 
   let digest = current.memory_digest ?? '';
-  if (facts.note && !digest.includes(facts.note)) {
-    digest = digest ? `${digest}\n${facts.note}` : facts.note;
-  }
-  if (digest.length > MAX_DIGEST) {
-    digest = digest.slice(digest.length - MAX_DIGEST);
-    const firstBreak = digest.indexOf('\n');
-    if (firstBreak > 0 && firstBreak < 80) digest = digest.slice(firstBreak + 1);
+  if (facts.note) {
+    digest = appendDigestNote(digest, facts.note);
   }
 
   return { name, contacts, meta, memory_digest: digest };

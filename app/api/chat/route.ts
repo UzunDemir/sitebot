@@ -13,6 +13,7 @@ import {
   createUIMessageStreamResponse,
   streamText,
   toUIMessageStream,
+  type ModelMessage,
   type UIMessage,
 } from 'ai';
 import { after } from 'next/server';
@@ -24,6 +25,7 @@ import { buildSystemPrompt } from '@/lib/prompts';
 import {
   ensureConversation,
   loadConversationById,
+  loadRecentMessages,
   saveUserMessage,
   saveAssistantMessage,
   updateConversationFields,
@@ -44,6 +46,9 @@ export const maxDuration = 60;
 
 /** Demo-grade per-bot daily quota (chat requests). */
 const DAILY_REQUEST_LIMIT = 300;
+
+/** Sanity cap for «вся история» (historyDepth = 0). */
+const MODEL_CONTEXT_MAX = 200;
 
 type ChatRequestBody = {
   messages?: UIMessage[];
@@ -173,9 +178,9 @@ export async function POST(req: Request): Promise<Response> {
       return jsonError('Empty query', 400);
     }
 
-    // --- history depth (0 = full history)
+    // --- memory window: how many recent dialog messages the model sees
+    // (0 = the whole dialog; the actual context is read from the DB below).
     const depth = settings.historyDepth ?? BOT_SETTINGS_DEFAULTS.historyDepth;
-    const history = depth > 0 && messages.length > depth ? messages.slice(-depth) : messages;
 
     // --- persistence + visitor card (sql/0003), before prompts: the memory
     // block and the stop-word handling both need the card. Best effort —
@@ -276,11 +281,36 @@ export async function POST(req: Request): Promise<Response> {
     const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory);
     const showSources = settings.showSources !== false;
 
+    // --- model context: dialog memory lives in the DB, not in the UI. The
+    // widget always shows a fresh feed (see the spec: «историю не выводим»),
+    // so the server assembles the context from the stored conversation —
+    // the last `historyDepth` messages, including the one just saved.
+    let modelMessages: ModelMessage[];
+    if (conversationId) {
+      const limit = depth === 0 ? MODEL_CONTEXT_MAX : depth;
+      const { messages: stored } = await loadRecentMessages(conversationId, limit);
+      modelMessages = stored.map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+      const tail = stored[stored.length - 1];
+      if (!tail || tail.role !== 'user' || tail.content !== query) {
+        // Persistence failed, or the tail is a proactive nudge — the current
+        // question must still reach the model.
+        modelMessages.push({ role: 'user', content: query });
+      }
+    } else {
+      // No session key: fall back to the dialog the client sent.
+      const legacyHistory =
+        depth > 0 && messages.length > depth ? messages.slice(-depth) : messages;
+      modelMessages = await convertToModelMessages(legacyHistory);
+    }
+
     // --- generation
     const result = streamText({
       model: resolveModel(bot.model_id),
       instructions: system,
-      messages: await convertToModelMessages(history),
+      messages: modelMessages,
       temperature: bot.thinking_enabled ? undefined : bot.temperature,
       maxOutputTokens: settings.maxOutputTokens ?? BOT_SETTINGS_DEFAULTS.maxOutputTokens,
       providerOptions: {
