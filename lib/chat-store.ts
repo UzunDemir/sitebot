@@ -86,3 +86,85 @@ export async function saveAssistantMessage(
   if (error) throw error;
   return data.id as number;
 }
+
+/* ---------------------------------------------------------------- */
+/* Read-side helpers (widget hydration: GET /api/chat/history)      */
+/* ---------------------------------------------------------------- */
+
+export type StoredMessage = {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  citations: unknown;
+  createdAt: string;
+};
+
+export async function getConversationId(botId: string, sessionKey: string): Promise<string | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('bot_id', botId)
+    .eq('session_key', sessionKey)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.id as string | undefined) ?? null;
+}
+
+export async function loadRecentMessages(
+  conversationId: string,
+  limit: number,
+): Promise<{ messages: StoredMessage[]; hasMore: boolean }> {
+  const supabase = getSupabase();
+  // Fetch newest-first to enforce the window, then flip to chronological.
+  const { data, error } = await supabase
+    .from('messages')
+    .select('id, role, content, citations, created_at')
+    .eq('conversation_id', conversationId)
+    .order('id', { ascending: false })
+    .limit(limit + 1);
+  if (error) throw error;
+
+  const rows = (data ?? []) as Array<{
+    id: number;
+    role: string;
+    content: string;
+    citations: unknown;
+    created_at: string;
+  }>;
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  return {
+    hasMore,
+    messages: page.reverse().map((row) => ({
+      id: row.id,
+      role: row.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: row.content,
+      citations: row.citations,
+      createdAt: row.created_at,
+    })),
+  };
+}
+
+export async function loadRatings(messageIds: number[]): Promise<Map<number, 1 | -1>> {
+  const ratings = new Map<number, 1 | -1>();
+  if (messageIds.length === 0) return ratings;
+
+  const supabase = getSupabase();
+  // Latest row wins: feedback has no unique constraint on message_id.
+  const { data, error } = await supabase
+    .from('feedback')
+    .select('id, message_id, rating')
+    .in('message_id', messageIds)
+    .order('id', { ascending: false });
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    const messageId = row.message_id as number;
+    if (!ratings.has(messageId) && (row.rating === 1 || row.rating === -1)) {
+      ratings.set(messageId, row.rating as 1 | -1);
+    }
+  }
+  return ratings;
+}

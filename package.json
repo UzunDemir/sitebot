@@ -11,6 +11,7 @@
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "smoke:admin": "node scripts/smoke-admin.mjs",
     "smoke:embed": "node scripts/smoke-embed.mjs",
+    "smoke:memory": "node scripts/smoke-memory.mjs",
     "eval": "node scripts/eval-run.mjs"
   },
   "dependencies": {

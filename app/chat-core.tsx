@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, type UIMessage } from 'ai';
 import {
   Component,
   useEffect,
@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
+import { readBrowserSessionKey } from '@/lib/session-key';
 
 export type ChatBotInfo = {
   publicKey: string;
@@ -29,7 +30,7 @@ type SourceItem = {
   similarity: number | null;
 };
 
-type FeedbackInfo = { messageId: number | null };
+type FeedbackInfo = { messageId: number | null; rating?: number };
 
 function messageText(parts: unknown[]): string {
   return parts
@@ -91,28 +92,6 @@ function paletteOf(t: WidgetTheme): Palette {
   };
 }
 
-/** Session id with fallbacks: crypto.randomUUID is missing in insecure
- *  contexts (an https iframe inside an http page) and in old WebViews —
- *  a session key needs uniqueness, not cryptographic randomness. */
-function makeSessionId(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID();
-    }
-    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-      const bytes = crypto.getRandomValues(new Uint8Array(16));
-      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-    }
-  } catch {
-    // fall through to the Math.random variant
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 export function Chat({
   bot,
   theme,
@@ -144,20 +123,11 @@ export function Chat({
   }, [t.fontUrl]);
 
   useEffect(() => {
-    let key = '';
-    try {
-      key = window.localStorage.getItem('sitebot_session') ?? '';
-      if (!key) {
-        key = makeSessionId();
-        window.localStorage.setItem('sitebot_session', key);
-      }
-    } catch {
-      // Storage unavailable (private mode, blocked third-party storage in
-      // an iframe): keep the session in memory — never crash the widget.
-      key = makeSessionId();
-    }
-    setSessionKey(key);
-  }, []);
+    // Per-bot key (sitebot_session_<pk>): two widgets on one device keep
+    // separate dialogs. The legacy shared key is adopted once so existing
+    // visitors continue their conversation after this upgrade.
+    setSessionKey(readBrowserSessionKey(bot.publicKey));
+  }, [bot.publicKey]);
 
   useEffect(() => {
     // In widget mode (host-page iframe) we can ask the loader to
@@ -207,7 +177,33 @@ export function Chat({
     [bot.publicKey, sessionKey],
   );
 
-  const { messages, sendMessage, status, error } = useChat({ transport });
+  const { messages, sendMessage, setMessages, status, error } = useChat({ transport });
+
+  // Dialog memory: restore the stored conversation for this bot + session so
+  // a reload (or a return visit) continues the dialog instead of starting
+  // over. Best effort: a failed fetch never blocks the chat, and a dialog
+  // already on screen is never overwritten.
+  useEffect(() => {
+    if (!sessionKey) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}`,
+        );
+        if (!res.ok) return;
+        const payload = (await res.json().catch(() => null)) as { messages?: unknown[] } | null;
+        const restored = Array.isArray(payload?.messages) ? (payload.messages as UIMessage[]) : [];
+        if (cancelled || restored.length === 0) return;
+        setMessages((current) => (current.length > 0 ? current : restored));
+      } catch {
+        // history is a bonus; ignore failures
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionKey, bot.publicKey, setMessages]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -452,7 +448,11 @@ export function Chat({
 }
 
 function FeedbackButtons({ info }: { info: FeedbackInfo | null }) {
-  const [sent, setSent] = useState<0 | 1 | -1>(0);
+  // A rating restored from history shows as already sent (no re-vote).
+  const [sent, setSent] = useState<0 | 1 | -1>(
+    info?.rating === 1 ? 1 : info?.rating === -1 ? -1 : 0,
+  );
+  const [fresh, setFresh] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!info?.messageId) return null;
@@ -466,7 +466,10 @@ function FeedbackButtons({ info }: { info: FeedbackInfo | null }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ messageId: info?.messageId, rating }),
       });
-      if (res.ok) setSent(rating);
+      if (res.ok) {
+        setSent(rating);
+        setFresh(true);
+      }
     } finally {
       setBusy(false);
     }
@@ -496,7 +499,7 @@ function FeedbackButtons({ info }: { info: FeedbackInfo | null }) {
       >
         👎
       </button>
-      {sent !== 0 && <span className="text-[10px] text-slate-400">спасибо, оценка сохранена</span>}
+      {fresh && <span className="text-[10px] text-slate-400">спасибо, оценка сохранена</span>}
     </div>
   );
 }

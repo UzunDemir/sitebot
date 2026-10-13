@@ -29,7 +29,7 @@ export type BotSettings = {
 export const BOT_SETTINGS_DEFAULTS = {
   maxOutputTokens: 600,
   showSources: true,
-  historyDepth: 16,
+  historyDepth: 40,
   chattiness: 'friendly' as BotChattiness,
   goal: 'none' as BotGoal,
   goalText: '',

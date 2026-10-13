@@ -12,9 +12,22 @@
 import { chunkDocument } from '../lib/chunker';
 import { toVectorLiteral } from '../lib/embeddings';
 import { getSupabase } from '../lib/supabase';
+import { LEGACY_SESSION_KEY, makeSessionId, readSessionKey, sessionStorageKey } from '../lib/session-key';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
+
+/** Minimal in-memory Storage for the session-key tests. */
+function fakeStorage(init: Record<string, string> = {}) {
+  const map = new Map<string, string>(Object.entries(init));
+  return {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      map.set(key, value);
+    },
+    dump: () => Object.fromEntries(map),
+  };
+}
 
 function main(): void {
   let failures = 0;
@@ -68,6 +81,48 @@ function main(): void {
       console.log(`  ✓ понятная ошибка без env: ${message.slice(0, 60)}…`);
     } else {
       console.error(`❌ неожиданная ошибка: ${message}`);
+      failures += 1;
+    }
+  }
+
+  // --- 4. session key: per-bot isolation + legacy migration
+  console.log('── session key ──');
+  {
+    // fresh visitor: a key is created and stays stable
+    const s1 = fakeStorage();
+    const first = readSessionKey(s1, 'pk_a');
+    const again = readSessionKey(s1, 'pk_a');
+    if (first && first === again && s1.getItem(sessionStorageKey('pk_a')) === first) {
+      console.log('  ✓ новый ключ создаётся и стабилен');
+    } else {
+      console.error(`❌ ключ нестабилен: ${first} / ${again}`);
+      failures += 1;
+    }
+
+    // per-bot isolation: two bots on one device → two keys
+    const second = readSessionKey(s1, 'pk_b');
+    if (second && second !== first) {
+      console.log('  ✓ у двух ботов — разные ключи');
+    } else {
+      console.error(`❌ ключи ботов совпали: ${second}`);
+      failures += 1;
+    }
+
+    // legacy migration: the old shared key is adopted once
+    const legacy = readSessionKey(fakeStorage({ [LEGACY_SESSION_KEY]: 'legacy-1' }), 'pk_c');
+    if (legacy === 'legacy-1') {
+      console.log('  ✓ legacy-ключ переносится в per-bot ключ');
+    } else {
+      console.error(`❌ legacy-ключ не мигрирован: ${legacy}`);
+      failures += 1;
+    }
+
+    // id generator: unique, non-empty
+    const ids = new Set([makeSessionId(), makeSessionId(), makeSessionId()]);
+    if (ids.size === 3 && [...ids].every((id) => id.length > 0)) {
+      console.log('  ✓ генератор id: 3 уникальных значения');
+    } else {
+      console.error('❌ генератор id вернул дубликаты');
       failures += 1;
     }
   }

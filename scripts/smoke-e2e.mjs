@@ -9,6 +9,7 @@
  * Checks:
  *   1. GET  /api/bot   — bot must be seeded
  *   2. POST /api/chat  — one real question; streamed answer + sources part
+ *   3. GET  /api/chat/history — the stored dialog comes back for hydration
  *
  * Usage:
  *   npm run smoke:e2e                            (local, after build+seed)
@@ -17,12 +18,29 @@
  */
 
 import { spawn, execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const REMOTE_BASE = (process.env.SMOKE_BASE_URL ?? '').trim().replace(/\/+$/, '');
 const BASE = REMOTE_BASE || 'http://localhost:3000';
 const MANAGE_SERVER = !REMOTE_BASE;
 const QUESTION = 'Сколько идёт возврат денег?';
+
+function loadEnvLocal() {
+  const env = {};
+  try {
+    for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s || s.startsWith('#')) continue;
+      const i = s.indexOf('=');
+      if (i === -1) continue;
+      env[s.slice(0, i).trim()] = s.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+    }
+  } catch {
+    // no .env.local — the sources expectation keeps its default
+  }
+  return env;
+}
 
 const child = MANAGE_SERVER
   ? spawn('cmd.exe', ['/d', '/s', '/c', 'npm run start'], {
@@ -111,13 +129,34 @@ try {
     );
     check('/api/bot: есть publicKey', Boolean(firstBot?.publicKey));
 
+    // The sources part in answers depends on the bot's showSources setting;
+    // read it via the service key when .env.local is available (local runs).
+    let showSources = true;
+    try {
+      const envLocal = loadEnvLocal();
+      const serviceKey = envLocal.SUPABASE_SERVICE_ROLE_KEY || envLocal.SUPABASE_SECRET_KEY;
+      if (envLocal.SUPABASE_URL && serviceKey) {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(envLocal.SUPABASE_URL, serviceKey);
+        const { data } = await supabase
+          .from('bots')
+          .select('settings')
+          .eq('public_key', firstBot.publicKey)
+          .maybeSingle();
+        showSources = data?.settings?.showSources !== false;
+      }
+    } catch {
+      // no .env.local — keep the default expectation (sources on)
+    }
+
     // 2) chat endpoint
     console.log('── /api/chat: реальный вопрос ──');
+    const sessionKey = `e2e-${Date.now()}`;
     const chatRes = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        sessionKey: `e2e-${Date.now()}`,
+        sessionKey,
         messages: [
           {
             id: 'e2e-user-1',
@@ -131,9 +170,41 @@ try {
 
     const raw = await chatRes.text();
     check('ответ непустой', raw.length > 0, `${raw.length} симв.`);
-    check('есть data-sources (источники)', raw.includes('data-sources'));
+    if (showSources) {
+      check('есть data-sources (источники включены)', raw.includes('data-sources'));
+    } else {
+      check('источники отключены (showSources=false) — data-sources нет', !raw.includes('data-sources'));
+    }
     check('есть data-feedback (id ответа для оценок)', raw.includes('data-feedback'));
     check('есть текст ответа', /[А-Яа-я]/.test(raw));
+
+    // 3) history hydration: the stored dialog comes back for the widget
+    console.log('── /api/chat/history: гидратация диалога ──');
+    const historyRes = await fetch(
+      `${BASE}/api/chat/history?botKey=${encodeURIComponent(firstBot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}`,
+    );
+    const historyJson = await historyRes.json().catch(() => null);
+    const historyMessages = historyJson?.messages ?? [];
+    check('/api/chat/history → 200', historyRes.ok, `HTTP ${historyRes.status}`);
+    check('история содержит вопрос и ответ', historyMessages.length >= 2, `${historyMessages.length} сообщ.`);
+    check(
+      'первое сообщение — вопрос пользователя',
+      historyMessages[0]?.role === 'user' && JSON.stringify(historyMessages[0]).includes('возврат'),
+    );
+    check(
+      'в истории есть data-feedback (оценки восстанавливаются)',
+      JSON.stringify(historyMessages).includes('data-feedback'),
+    );
+
+    const emptyRes = await fetch(
+      `${BASE}/api/chat/history?botKey=${encodeURIComponent(firstBot.publicKey)}&sessionKey=unknown-${Date.now()}`,
+    );
+    const emptyJson = await emptyRes.json().catch(() => null);
+    check(
+      'неизвестная сессия → пустая история',
+      emptyRes.ok && (emptyJson?.messages?.length ?? -1) === 0,
+      `HTTP ${emptyRes.status}`,
+    );
 
     const answer = [...extractStreamField(raw, 'text'), ...extractStreamField(raw, 'delta')]
       .join('')
