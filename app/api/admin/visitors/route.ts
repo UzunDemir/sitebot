@@ -4,14 +4,17 @@
  * GET /api/admin/visitors?botId=...
  *
  * Returns cards ordered by last_seen plus per-visitor conversation counts.
- * When sql/0003_seller.sql is not applied yet, answers { visitors: [],
- * available: false } so the admin UI can show a migration hint.
+ * Columns of sql/0004 (birthday, preferences, complaints) are read when
+ * present; a pre-0004 schema falls back gracefully. When sql/0003 is not
+ * applied yet, answers { visitors: [], available: false }.
  */
 
 import { connection } from 'next/server';
 import { adminGuard } from '@/lib/admin-auth';
 import { getSupabase } from '@/lib/supabase';
-import { isMissingRelationError, parseVisitorRow } from '@/lib/visitors';
+import { isMissingColumnError } from '@/lib/bot-settings';
+import { isMissingRelationError, parseVisitorRow, VISITOR_COLUMNS, VISITOR_COLUMNS_V4 } from '@/lib/visitors';
+import { makeBirthday, serializeBirthday } from '@/lib/birthday';
 
 export async function GET(req: Request): Promise<Response> {
   await connection();
@@ -26,23 +29,41 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const supabase = getSupabase();
-    const { data, error } = await supabase
+
+    // 0004 columns first; a missing column falls back to the 0003 shape.
+    const rows: Record<string, unknown>[] = [];
+    let loadError: unknown = null;
+    let schemaV4 = true;
+
+    const first = await supabase
       .from('visitors')
-      .select(
-        'id, bot_id, visitor_key, name, contacts, tags, notes, memory_digest, do_not_disturb, meta, first_seen, last_seen',
-      )
+      .select(VISITOR_COLUMNS_V4)
       .eq('bot_id', botId)
       .order('last_seen', { ascending: false })
       .limit(200);
-
-    if (error) {
-      if (isMissingRelationError(error)) {
-        return Response.json({ visitors: [], available: false });
-      }
-      throw error;
+    if (first.error && isMissingColumnError(first.error)) {
+      const fallback = await supabase
+        .from('visitors')
+        .select(VISITOR_COLUMNS)
+        .eq('bot_id', botId)
+        .order('last_seen', { ascending: false })
+        .limit(200);
+      schemaV4 = false;
+      loadError = fallback.error ?? null;
+      for (const row of (fallback.data ?? []) as unknown as Record<string, unknown>[]) rows.push(row);
+    } else {
+      loadError = first.error ?? null;
+      for (const row of (first.data ?? []) as unknown as Record<string, unknown>[]) rows.push(row);
     }
 
-    const visitors = (data ?? []).map((row) => parseVisitorRow(row as Record<string, unknown>));
+    if (loadError) {
+      if (isMissingRelationError(loadError)) {
+        return Response.json({ visitors: [], available: false });
+      }
+      throw loadError;
+    }
+
+    const visitors = rows.map((row) => parseVisitorRow(row, schemaV4));
 
     // Conversation counts (one extra query for the visible page of cards).
     const counts = new Map<string, number>();
@@ -60,19 +81,29 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({
       available: true,
-      visitors: visitors.map((visitor) => ({
-        id: visitor.id,
-        visitorKey: visitor.visitor_key,
-        name: visitor.name,
-        contacts: visitor.contacts,
-        tags: visitor.tags,
-        notes: visitor.notes,
-        memoryDigest: visitor.memory_digest,
-        doNotDisturb: visitor.do_not_disturb,
-        firstSeen: visitor.first_seen,
-        lastSeen: visitor.last_seen,
-        conversationsCount: counts.get(visitor.id) ?? 0,
-      })),
+      visitors: visitors.map((visitor) => {
+        const birthday = makeBirthday(
+          visitor.birthday_day,
+          visitor.birthday_month,
+          visitor.birthday_year,
+        );
+        return {
+          id: visitor.id,
+          visitorKey: visitor.visitor_key,
+          name: visitor.name,
+          contacts: visitor.contacts,
+          tags: visitor.tags,
+          notes: visitor.notes,
+          memoryDigest: visitor.memory_digest,
+          doNotDisturb: visitor.do_not_disturb,
+          birthday: birthday ? serializeBirthday(birthday) : null,
+          preferences: visitor.preferences,
+          complaints: visitor.complaints,
+          firstSeen: visitor.first_seen,
+          lastSeen: visitor.last_seen,
+          conversationsCount: counts.get(visitor.id) ?? 0,
+        };
+      }),
     });
   } catch (err) {
     console.error('[admin] visitors load failed:', err);

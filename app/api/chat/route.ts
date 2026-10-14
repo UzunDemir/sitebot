@@ -39,6 +39,9 @@ import {
 } from '@/lib/visitors';
 import { runStrategist } from '@/lib/visitor-memory';
 import { isStopRequest, STOP_REPLY } from '@/lib/nudge';
+import { describeNow } from '@/lib/clock';
+import { formatBirthday, isBirthdayToday, makeBirthday, type Birthday } from '@/lib/birthday';
+import { listPurchases, summarizePurchases } from '@/lib/purchases';
 import { estimateCostUsd } from '@/lib/pricing';
 import { BOT_SETTINGS_DEFAULTS, isMissingColumnError, parseBotSettings } from '@/lib/bot-settings';
 
@@ -55,6 +58,8 @@ type ChatRequestBody = {
   botKey?: string;
   sessionKey?: string;
   visitorKey?: string;
+  /** IANA-таймзона посетителя (Intl) — для «осознания времени». */
+  tz?: string;
 };
 
 type BotRow = {
@@ -144,6 +149,7 @@ export async function POST(req: Request): Promise<Response> {
     const messages = body.messages ?? [];
     const sessionKey = body.sessionKey?.trim() ?? '';
     const visitorKey = body.visitorKey?.trim() ?? '';
+    const tz = body.tz?.trim() ?? '';
     const startedAt = Date.now();
 
     // --- resolve bot
@@ -262,8 +268,23 @@ export async function POST(req: Request): Promise<Response> {
       return createUIMessageStreamResponse({ stream: stopStream });
     }
 
-    // --- retrieval + grounded prompt (with the visitor memory block)
+    // --- retrieval + grounded prompt (memory block + time awareness)
     const sources = await hybridSearch(bot.id, query, bot.top_k ?? 6);
+
+    // Текущее время в таймзоне посетителя; день рождения и покупки (0004).
+    const now = new Date();
+    const nowInfo = describeNow(tz, now);
+    let birthday: Birthday | null = null;
+    let birthdayToday = false;
+    let purchasesSummary: string | null = null;
+    if (visitorRow) {
+      birthday = makeBirthday(visitorRow.birthday_day, visitorRow.birthday_month, visitorRow.birthday_year);
+      if (birthday) birthdayToday = isBirthdayToday(birthday, nowInfo.timeZone, now);
+      if (visitorRow.schema_v4) {
+        purchasesSummary = summarizePurchases(await listPurchases(visitorRow.id, 20));
+      }
+    }
+
     const memory = visitorRow
       ? {
           name: visitorRow.name,
@@ -276,9 +297,14 @@ export async function POST(req: Request): Promise<Response> {
           digest: visitorRow.memory_digest,
           stage: conversationMeta?.stage ?? 'greeting',
           returning: Boolean(visitorRow.name || visitorRow.memory_digest),
+          birthday: birthday ? formatBirthday(birthday) : null,
+          birthdayToday,
+          preferences: visitorRow.preferences,
+          complaints: visitorRow.complaints,
+          purchases: purchasesSummary,
         }
       : undefined;
-    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory);
+    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory, nowInfo.text);
     const showSources = settings.showSources !== false;
 
     // --- model context: dialog memory lives in the DB, not in the UI. The
@@ -389,6 +415,7 @@ export async function POST(req: Request): Promise<Response> {
       const strategistContext = {
         goal: settings.goal ?? ('none' as const),
         goalText: settings.goalText ?? '',
+        nowText: nowInfo.text,
       };
       after(async () => {
         try {

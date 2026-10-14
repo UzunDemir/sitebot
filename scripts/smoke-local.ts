@@ -23,11 +23,21 @@ import {
 import {
   appendDigestNote,
   factsAreEmpty,
+  mergeListItems,
   mergeVisitorFacts,
   notesAreSimilar,
   sanitizeStrategistResult,
   sanitizeVisitorFacts,
 } from '../lib/visitor-memory';
+import {
+  formatBirthday,
+  isBirthdayToday,
+  makeBirthday,
+  parseBirthday,
+  serializeBirthday,
+} from '../lib/birthday';
+import { describeNow } from '../lib/clock';
+import { summarizePurchases } from '../lib/purchases';
 import {
   BOT_SETTINGS_DEFAULTS,
   effectiveAggressiveness,
@@ -408,6 +418,165 @@ function main(): void {
       console.log('  ✓ шкалы характера: юмор/хитрость/остроумие дают директивы');
     } else {
       console.error(`❌ personalityRules: ${JSON.stringify(personality)}`);
+      failures += 1;
+    }
+  }
+
+  // --- 7. Ф2+: дата рождения, предпочтения, покупки, осознание времени
+  console.log('── birthday / preferences / purchases / clock ──');
+  {
+    // parsing: dotted, verbal and ISO; invalid values are dropped
+    const b1 = parseBirthday('05.03');
+    const b2 = parseBirthday('5 марта 1990');
+    const b3 = parseBirthday('1990-03-05');
+    const bad = parseBirthday('32.13');
+    const leapOk = makeBirthday(29, 2, null) !== null;
+    const leapBad = makeBirthday(30, 2, null) === null;
+    if (
+      b1 !== null &&
+      b1.day === 5 &&
+      b1.month === 3 &&
+      b1.year === null &&
+      b2 !== null &&
+      b2.day === 5 &&
+      b2.month === 3 &&
+      b2.year === 1990 &&
+      b3 !== null &&
+      b3.day === 5 &&
+      b3.month === 3 &&
+      b3.year === 1990 &&
+      bad === null &&
+      leapOk &&
+      leapBad &&
+      serializeBirthday(b2) === '05.03.1990' &&
+      formatBirthday(b2) === '5 марта 1990' &&
+      formatBirthday(b1) === '5 марта'
+    ) {
+      console.log('  ✓ birthday: парсинг, канон и формат; 29 февраля без года допустимо');
+    } else {
+      console.error(`❌ birthday: ${JSON.stringify({ b1, b2, b3, bad, leapOk, leapBad })}`);
+      failures += 1;
+    }
+
+    // «сегодня день рождения» учитывает таймзону посетителя
+    const bday = { day: 14, month: 10, year: null };
+    const todayOk =
+      isBirthdayToday(bday, 'UTC', new Date('2026-10-14T12:00:00Z')) === true &&
+      isBirthdayToday(bday, 'UTC', new Date('2026-10-15T12:00:00Z')) === false &&
+      isBirthdayToday({ day: 15, month: 10, year: null }, 'Pacific/Kiritimati', new Date('2026-10-14T12:00:00Z')) === true;
+    if (todayOk) {
+      console.log('  ✓ isBirthdayToday: дата считается в таймзоне посетителя');
+    } else {
+      console.error('❌ isBirthdayToday: таймзона не учтена');
+      failures += 1;
+    }
+
+    // describeNow: человекочитаемое время для промпта
+    const nowInfo = describeNow('Europe/Moscow', new Date('2026-10-14T12:00:00Z'));
+    const nowFallback = describeNow('Нет/Такого', new Date('2026-10-14T12:00:00Z'));
+    if (
+      nowInfo.text.includes('14 октября 2026') &&
+      nowInfo.text.includes('15:00') &&
+      nowInfo.text.includes('Europe/Moscow') &&
+      nowFallback.timeZone === 'UTC'
+    ) {
+      console.log(`  ✓ describeNow: ${nowInfo.text}`);
+    } else {
+      console.error(`❌ describeNow: ${nowInfo.text} / fallback=${nowFallback.timeZone}`);
+      failures += 1;
+    }
+
+    // sanitize: birthday нормализуется, preferences/complaint чистятся
+    const ext = sanitizeVisitorFacts({
+      birthday: '5 марта 1990',
+      preferences: ['любит оверсайз', 'ЛЮБИТ ОВЕРСАЙЗ', 'не любит кожу', 42],
+      complaint: 'Задержали прошлый заказ на неделю',
+    });
+    if (
+      ext.birthday !== undefined &&
+      ext.birthday.day === 5 &&
+      ext.birthday.month === 3 &&
+      ext.birthday.year === 1990 &&
+      JSON.stringify(ext.preferences) === JSON.stringify(['любит оверсайз', 'не любит кожу']) &&
+      ext.complaints?.length === 1
+    ) {
+      console.log('  ✓ sanitize: дата рождения, предпочтения и претензия разобраны');
+    } else {
+      console.error(`❌ sanitize ext: ${JSON.stringify(ext)}`);
+      failures += 1;
+    }
+
+    // merge: предпочтения/претензии объединяются без дублей; ДР владельца побеждает
+    const mergedExt = mergeVisitorFacts(
+      {
+        name: null,
+        contacts: {},
+        meta: {},
+        memory_digest: '',
+        preferences: ['любит оверсайз'],
+        complaints: [],
+        birthday_day: null,
+        birthday_month: null,
+        birthday_year: null,
+      },
+      {
+        birthday: { day: 5, month: 3, year: null },
+        preferences: ['любит оверсайз!', 'не любит кожу'],
+        complaints: ['Задержали прошлый заказ'],
+      },
+    );
+    const mergedOwner = mergeVisitorFacts(
+      {
+        name: null,
+        contacts: {},
+        meta: {},
+        memory_digest: '',
+        birthday_day: 1,
+        birthday_month: 1,
+        birthday_year: 1990,
+      },
+      { birthday: { day: 5, month: 3, year: null } },
+    );
+    const capped = mergeListItems(['a'.repeat(60)], Array.from({ length: 9 }, (_, i) => `item-${i}`), 8);
+    if (
+      mergedExt.birthday?.day === 5 &&
+      mergedExt.preferences.length === 2 &&
+      mergedExt.complaints.length === 1 &&
+      mergedOwner.birthday?.day === 1 &&
+      mergedOwner.birthday?.year === 1990 &&
+      capped.length === 8
+    ) {
+      console.log('  ✓ merge: списки без дублей, ДР владельца не перезаписан, лимит держится');
+    } else {
+      console.error(
+        `❌ merge ext: ${JSON.stringify({ mergedExt, mergedOwner, capped: capped.length })}`,
+      );
+      failures += 1;
+    }
+
+    // purchases: сводка для промпта и пустые случаи
+    const summary = summarizePurchases([
+      { id: '1', title: 'Пуховик Arctic', amount: 12900, currency: 'RUB', status: 'completed', orderedAt: '2026-10-01' },
+      { id: '2', title: 'Шапка', amount: 2000, currency: 'RUB', status: 'completed', orderedAt: '2026-09-01' },
+    ]);
+    const single = summarizePurchases([
+      { id: '3', title: 'Перчатки', amount: null, currency: 'RUB', status: 'pending', orderedAt: '2026-10-01' },
+    ]);
+    const refundOnly = summarizePurchases([
+      { id: '4', title: 'Возврат', amount: 100, currency: 'RUB', status: 'refunded', orderedAt: '2026-10-01' },
+    ]);
+    if (
+      summary !== null &&
+      summary.includes('2 покупки') &&
+      summary.includes('Пуховик Arctic') &&
+      single !== null &&
+      single.includes('1 покупка') &&
+      refundOnly === null &&
+      summarizePurchases([]) === null
+    ) {
+      console.log(`  ✓ покупки: сводка «${summary}»`);
+    } else {
+      console.error(`❌ покупки: ${JSON.stringify({ summary, single, refundOnly })}`);
       failures += 1;
     }
   }

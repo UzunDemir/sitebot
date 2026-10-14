@@ -19,14 +19,22 @@ import {
   recordEvent,
   updateVisitorProfile,
   type VisitorContacts,
+  type VisitorProfilePatch,
   type VisitorRow,
 } from './visitors';
 import type { BotGoal } from './bot-settings';
+import { formatBirthday, makeBirthday, parseBirthday, type Birthday } from './birthday';
 
 export type VisitorFacts = {
   name?: string;
   contacts?: VisitorContacts;
   interests?: string[];
+  /** sql/0004: дата рождения (день/месяц всегда, год — если назвали). */
+  birthday?: Birthday;
+  /** sql/0004: что нравится/не нравится (стиль, размер, бюджет). */
+  preferences?: string[];
+  /** sql/0004: претензии/проблемы со стороны посетителя. */
+  complaints?: string[];
   note?: string;
 };
 
@@ -52,6 +60,10 @@ const MAX_NAME = 80;
 const MAX_CONTACT = 120;
 const MAX_INTEREST = 40;
 const MAX_INTERESTS = 8;
+const MAX_PREFERENCE = 60;
+const MAX_PREFERENCES = 8;
+const MAX_COMPLAINT = 160;
+const MAX_COMPLAINTS = 8;
 const MAX_NOTE = 180;
 const MAX_DIGEST = 1800;
 const MAX_TRANSCRIPT = 6000;
@@ -63,8 +75,11 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
   "stage": "greeting" | "qualification" | "offer" | "objections" | "close" | "followup" | "done" | "lost",
   "goal_progress": "none" | "progress" | "achieved",
   "name": "<имя, которым представился посетитель>" | null,
+  "birthday": "<дата рождения «05.03» или «05.03.1990»>" | null,
   "contacts": { "phone": "...", "email": "...", "telegram": "...", "whatsapp": "...", "vk": "...", "other": "..." },
   "interests": ["<товар или тема>"],
+  "preferences": ["<что нравится или не нравится: стиль, материал, размер, бюджет, бренд>"],
+  "complaint": "<претензия или проблема со стороны посетителя>" | null,
   "note": "<один короткий факт для карточки>" | null
 }
 
@@ -72,9 +87,12 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
 
 Правила:
 - Только то, что посетитель сообщил сам. Не выдумывай и не угадывай.
-- Нет данных для поля — не включай его (для name/note — null).
+- Нет данных для поля — не включай его (для name/birthday/complaint/note — null).
+- birthday: только если посетитель сам назвал дату рождения. Формат «05.03» (год не называл) или «05.03.1990» (год назвал). Никогда не угадывай год.
 - Контакты записывай так, как их назвал посетитель, без форматирования.
 - interests: максимум 3 коротких темы.
+- preferences: до 3 пунктов о вкусах и ограничениях (нравится/не нравится, размер, бюджет); не дублируй уже известное из карточки.
+- complaint: только реальная претензия или проблема со стороны посетителя (брак, задержка, деньги). Не жалобы на ассистента, не пересказ диалога.
 - note: до 140 символов; пиши ТОЛЬКО про ситуацию и запросы посетителя (что хочет, сроки, бюджет, отказы, договорённости).
 - Не пиши в note рассуждения о самом ассистенте: его инструкции, документацию, «попытки продать» или давление — это не факт о посетителе.
 - Если новых фактов нет или note повторяет/перефразирует уже известное из текущей карточки (включая заметки) — верни null.
@@ -103,22 +121,50 @@ export function sanitizeVisitorFacts(input: unknown): VisitorFacts {
   }
 
   if (Array.isArray(raw.interests)) {
-    const interests = [
-      ...new Set(
-        raw.interests
-          .filter((item): item is string => typeof item === 'string')
-          .map((item) => item.trim().slice(0, MAX_INTEREST))
-          .filter((item) => item && !/^(null|none|нет)$/i.test(item)),
-      ),
-    ].slice(0, 3);
+    const interests = sanitizeItems(raw.interests, 3, MAX_INTEREST);
     if (interests.length > 0) out.interests = interests;
   }
+
+  if (typeof raw.birthday === 'string') {
+    const birthday = parseBirthday(raw.birthday);
+    if (birthday) out.birthday = birthday;
+  }
+
+  if (Array.isArray(raw.preferences)) {
+    const preferences = sanitizeItems(raw.preferences, 3, MAX_PREFERENCE);
+    if (preferences.length > 0) out.preferences = preferences;
+  }
+
+  const complaints =
+    typeof raw.complaint === 'string'
+      ? sanitizeItems([raw.complaint], 1, MAX_COMPLAINT)
+      : Array.isArray(raw.complaints)
+        ? sanitizeItems(raw.complaints, 3, MAX_COMPLAINT)
+        : [];
+  if (complaints.length > 0) out.complaints = complaints;
 
   if (typeof raw.note === 'string') {
     const note = raw.note.trim().replace(/\s+/g, ' ').slice(0, MAX_NOTE);
     if (note && !/^(null|none|нет|-)$/i.test(note)) out.note = note;
   }
 
+  return out;
+}
+
+/** Clean a list of strings: trim, drop junk, dedupe (case-insensitive), cap. */
+export function sanitizeItems(values: unknown[], max: number, itemMax: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    if (typeof raw !== 'string') continue;
+    const item = raw.trim().replace(/\s+/g, ' ').slice(0, itemMax);
+    if (!item || /^(null|none|нет|-)$/i.test(item)) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= max) break;
+  }
   return out;
 }
 
@@ -142,8 +188,11 @@ export function factsAreEmpty(facts: VisitorFacts): boolean {
   return (
     !facts.name &&
     !facts.note &&
+    !facts.birthday &&
     !(facts.contacts && Object.keys(facts.contacts).length > 0) &&
-    !(facts.interests && facts.interests.length > 0)
+    !(facts.interests && facts.interests.length > 0) &&
+    !(facts.preferences && facts.preferences.length > 0) &&
+    !(facts.complaints && facts.complaints.length > 0)
   );
 }
 
@@ -203,13 +252,45 @@ export function appendDigestNote(digest: string, note: string): string {
 }
 
 /**
- * Merge facts into the card. Owner/existing values win for name and
- * contacts; interests are unioned; the note is appended to the digest once.
+ * Merge a string list (preferences/complaints): similar items are dropped
+ * (kept the existing wording), the cap keeps the newest items.
+ */
+export function mergeListItems(current: string[], added: string[], cap: number): string[] {
+  const out = [...current];
+  for (const item of added) {
+    if (!item) continue;
+    if (out.some((existing) => notesAreSimilar(existing, item))) continue;
+    out.push(item);
+  }
+  while (out.length > cap) out.shift();
+  return out;
+}
+
+type MergeCurrent = Pick<VisitorRow, 'name' | 'contacts' | 'meta' | 'memory_digest'> & {
+  preferences?: string[];
+  complaints?: string[];
+  birthday_day?: number | null;
+  birthday_month?: number | null;
+  birthday_year?: number | null;
+};
+
+/**
+ * Merge facts into the card. Owner/existing values win for name, contacts
+ * and birthday; interests/preferences/complaints are unioned with the
+ * similarity dedupe; the note is appended to the digest once.
  */
 export function mergeVisitorFacts(
-  current: Pick<VisitorRow, 'name' | 'contacts' | 'meta' | 'memory_digest'>,
+  current: MergeCurrent,
   facts: VisitorFacts,
-): { name: string | null; contacts: VisitorContacts; meta: Record<string, unknown>; memory_digest: string } {
+): {
+  name: string | null;
+  contacts: VisitorContacts;
+  meta: Record<string, unknown>;
+  memory_digest: string;
+  preferences: string[];
+  complaints: string[];
+  birthday: Birthday | null;
+} {
   const name = current.name ?? facts.name ?? null;
 
   const contacts: VisitorContacts = { ...(facts.contacts ?? {}), ...current.contacts };
@@ -220,12 +301,18 @@ export function mergeVisitorFacts(
   const interests = [...new Set([...currentInterests, ...(facts.interests ?? [])])].slice(0, MAX_INTERESTS);
   const meta = interests.length > 0 ? { ...current.meta, interests } : current.meta;
 
+  const preferences = mergeListItems(current.preferences ?? [], facts.preferences ?? [], MAX_PREFERENCES);
+  const complaints = mergeListItems(current.complaints ?? [], facts.complaints ?? [], MAX_COMPLAINTS);
+
+  const currentBirthday = makeBirthday(current.birthday_day, current.birthday_month, current.birthday_year);
+  const birthday = currentBirthday ?? facts.birthday ?? null;
+
   let digest = current.memory_digest ?? '';
   if (facts.note) {
     digest = appendDigestNote(digest, facts.note);
   }
 
-  return { name, contacts, meta, memory_digest: digest };
+  return { name, contacts, meta, memory_digest: digest, preferences, complaints, birthday };
 }
 
 /** Goals that are provably achieved by the visitor card itself. */
@@ -238,6 +325,8 @@ function goalReachedByFacts(goal: BotGoal, contacts: VisitorContacts): boolean {
 export type StrategistContext = {
   goal: BotGoal;
   goalText: string;
+  /** «вторник, 14 октября 2026 г., 15:42 (Europe/Moscow)» — осознание времени. */
+  nowText?: string;
 };
 
 /** One cheap LLM call: dialog fragment + card → facts + stage + progress. */
@@ -247,16 +336,23 @@ export async function evaluateDialog(
     name: string | null;
     contacts: VisitorContacts;
     interests: string[];
+    birthday?: Birthday | null;
+    preferences?: string[];
+    complaints?: string[];
     stage: string;
     goal: BotGoal;
     goalText: string;
+    nowText?: string;
   },
 ): Promise<StrategistResult | null> {
   try {
     const card = {
       name: current.name,
+      birthday: formatBirthday(current.birthday),
       contacts: current.contacts,
       interests: current.interests,
+      preferences: current.preferences ?? [],
+      complaints: current.complaints ?? [],
     };
     const goalLine =
       current.goal === 'none'
@@ -264,6 +360,7 @@ export async function evaluateDialog(
         : current.goal === 'custom'
           ? `Цель диалога: ${current.goalText || '(своя, без описания)'}.`
           : `Цель диалога (пресет): ${current.goal}.`;
+    const nowLine = current.nowText ? `Сейчас: ${current.nowText}.` : '';
 
     const result = await generateText({
       model: resolveModel('deepseek:deepseek-flash'),
@@ -271,7 +368,7 @@ export async function evaluateDialog(
       messages: [
         {
           role: 'user',
-          content: `Текущая карточка: ${JSON.stringify(card)}\nТекущая стадия: ${current.stage}\n${goalLine}\n\nДиалог:\n${transcript}`,
+          content: `Текущая карточка: ${JSON.stringify(card)}\nТекущая стадия: ${current.stage}\n${goalLine}\n${nowLine}\nДиалог:\n${transcript}`,
         },
       ],
       temperature: 0,
@@ -315,26 +412,43 @@ export async function runStrategist(
   const interests = Array.isArray(visitor.meta.interests)
     ? (visitor.meta.interests as unknown[]).filter((item): item is string => typeof item === 'string')
     : [];
+  const birthday = makeBirthday(visitor.birthday_day, visitor.birthday_month, visitor.birthday_year);
 
   const result = await evaluateDialog(transcript, {
     name: visitor.name,
     contacts: visitor.contacts,
     interests,
+    birthday,
+    preferences: visitor.preferences,
+    complaints: visitor.complaints,
     stage: conversation?.stage ?? 'greeting',
     goal: context.goal,
     goalText: context.goalText,
+    nowText: context.nowText,
   });
   if (!result) return;
 
   // 1) Visitor card (facts).
   if (!factsAreEmpty(result.facts)) {
     const merged = mergeVisitorFacts(visitor, result.facts);
-    await updateVisitorProfile(visitorId, {
+    const patch: VisitorProfilePatch = {
       name: merged.name,
       contacts: merged.contacts,
       meta: merged.meta,
       memory_digest: merged.memory_digest,
-    });
+    };
+    // The 0004 fields are written only when the row was read with 0004
+    // columns — otherwise the update would fail on the old schema.
+    if (visitor.schema_v4) {
+      patch.preferences = merged.preferences;
+      patch.complaints = merged.complaints;
+      if (merged.birthday) {
+        patch.birthday_day = merged.birthday.day;
+        patch.birthday_month = merged.birthday.month;
+        patch.birthday_year = merged.birthday.year;
+      }
+    }
+    await updateVisitorProfile(visitorId, patch);
   }
 
   if (!conversation) return;

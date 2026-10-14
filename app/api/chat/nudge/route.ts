@@ -27,6 +27,8 @@ import {
   updateConversationFields,
 } from '@/lib/chat-store';
 import { loadVisitorByKey, recordEvent } from '@/lib/visitors';
+import { describeNow } from '@/lib/clock';
+import { listPurchases, summarizePurchases } from '@/lib/purchases';
 import {
   generateNudgeText,
   inQuietWindow,
@@ -65,6 +67,7 @@ export async function POST(req: Request): Promise<Response> {
     const botKey = body?.botKey?.trim() ?? '';
     const sessionKey = body?.sessionKey?.trim() ?? '';
     const visitorKey = body?.visitorKey?.trim() ?? '';
+    const tz = body?.tz?.trim() ?? '';
     if (!botKey || !sessionKey) {
       return Response.json({ error: 'bad_request' }, { status: 400 });
     }
@@ -103,7 +106,6 @@ export async function POST(req: Request): Promise<Response> {
 
     // --- quiet hours in the visitor's timezone (client sends its tz)
     if (proactive.quietHours.enabled) {
-      const tz = body?.tz?.trim() ?? '';
       const fromMinutes = minutesOf(proactive.quietHours.from);
       const toMinutes = minutesOf(proactive.quietHours.to);
       const nowMinutes = tz ? localMinutes(tz, now) : null;
@@ -155,6 +157,11 @@ export async function POST(req: Request): Promise<Response> {
         contacts: visitor?.contacts ?? {},
         digest: visitor?.memory_digest ?? '',
       },
+      preferences: visitor?.preferences ?? [],
+      complaints: visitor?.complaints ?? [],
+      purchases:
+        visitor && visitor.schema_v4 ? summarizePurchases(await listPurchases(visitor.id, 20)) : null,
+      nowText: describeNow(tz, now).text,
       dialog: transcript,
     });
 

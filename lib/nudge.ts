@@ -118,6 +118,13 @@ export type NudgeContext = {
   stage: string;
   settings: BotSettings;
   visitor: { name: string | null; contacts: VisitorContacts; digest: string };
+  /** sql/0004: предпочтения и претензии из карточки. */
+  preferences?: string[];
+  complaints?: string[];
+  /** «2 покупки; последняя — …» — контекст для уместного дожима. */
+  purchases?: string | null;
+  /** «вторник, 14 октября 2026 г., 15:42 (Europe/Moscow)». */
+  nowText?: string;
   /** Transcript tail: «Посетитель: …» / «Ассистент: …» */
   dialog: string;
 };
@@ -147,6 +154,9 @@ export async function generateNudgeText(context: NudgeContext): Promise<string> 
     const card = {
       name: context.visitor.name,
       contacts: context.visitor.contacts,
+      preferences: context.preferences ?? [],
+      complaints: context.complaints ?? [],
+      purchases: context.purchases ?? null,
       notes: context.visitor.digest.slice(0, 400),
     };
 
@@ -156,7 +166,7 @@ export async function generateNudgeText(context: NudgeContext): Promise<string> 
       messages: [
         {
           role: 'user',
-          content: `Карточка посетителя: ${JSON.stringify(card)}\nСтадия: ${context.stage}\n\nДиалог (фрагмент):\n${context.dialog}`,
+          content: `${context.nowText ? `Сейчас: ${context.nowText}.\n` : ''}Карточка посетителя: ${JSON.stringify(card)}\nСтадия: ${context.stage}\n\nДиалог (фрагмент):\n${context.dialog}`,
         },
       ],
       temperature: 0.6,

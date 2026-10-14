@@ -37,6 +37,26 @@ type VisitorListItem = {
   firstSeen: string;
   lastSeen: string;
   conversationsCount: number;
+  /** «05.03» / «05.03.1990» (sql/0004). */
+  birthday: string | null;
+  preferences: string[];
+  complaints: string[];
+};
+
+type VisitorPurchase = {
+  id: string;
+  title: string;
+  amount: number | null;
+  currency: string;
+  status: string;
+  orderedAt: string;
+};
+
+const PURCHASE_STATUS_LABELS: Record<string, string> = {
+  pending: 'в процессе',
+  completed: 'куплено',
+  canceled: 'отменена',
+  refunded: 'возврат',
 };
 
 type VisitorConversation = {
@@ -90,7 +110,16 @@ const EVENT_LABELS: Record<string, string> = {
   stop_request: 'просьба не писать',
   goal_reached: 'цель достигнута',
   session_closed: 'сессия закрыта',
+  nudge_sent: 'написал сам (дожим)',
+  nudge_answered: 'ответил на дожим',
 };
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—';
@@ -121,15 +150,27 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
 
   const [detail, setDetail] = useState<{
     visitor: VisitorListItem;
+    purchases: VisitorPurchase[];
+    purchasesAvailable: boolean;
     conversations: VisitorConversation[];
     events: VisitorEvent[];
   } | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
 
-  const [form, setForm] = useState({ name: '', notes: '', tags: '', dnd: false });
+  const [form, setForm] = useState({
+    name: '',
+    notes: '',
+    tags: '',
+    dnd: false,
+    birthday: '',
+    preferences: '',
+    complaints: '',
+  });
   const [contacts, setContacts] = useState<Record<string, string>>({});
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [purchaseForm, setPurchaseForm] = useState({ title: '', amount: '', status: 'completed' });
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
 
   const loadList = useCallback(async (): Promise<void> => {
     setListBusy(true);
@@ -151,6 +192,8 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
     if (res.ok && res.data?.visitor) {
       setDetail({
         visitor: res.data.visitor as VisitorListItem,
+        purchases: Array.isArray(res.data.purchases) ? (res.data.purchases as VisitorPurchase[]) : [],
+        purchasesAvailable: res.data.purchasesAvailable !== false,
         conversations: Array.isArray(res.data.conversations) ? res.data.conversations : [],
         events: Array.isArray(res.data.events) ? res.data.events : [],
       });
@@ -177,6 +220,9 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
       notes: detail.visitor.notes ?? '',
       tags: (detail.visitor.tags ?? []).join(', '),
       dnd: detail.visitor.doNotDisturb === true,
+      birthday: detail.visitor.birthday ?? '',
+      preferences: (detail.visitor.preferences ?? []).join('\n'),
+      complaints: (detail.visitor.complaints ?? []).join('\n'),
     });
     setContacts({ ...(detail.visitor.contacts ?? {}) });
     setSaveMessage(null);
@@ -211,6 +257,9 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
         tags: form.tags,
         contacts,
         do_not_disturb: form.dnd,
+        birthday: form.birthday,
+        preferences: splitLines(form.preferences),
+        complaints: splitLines(form.complaints),
       }),
     });
     setSaveBusy(false);
@@ -222,6 +271,38 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
     } else {
       setSaveMessage({ kind: 'err', text: 'Не удалось сохранить карточку.' });
     }
+  }
+
+  async function addPurchase() {
+    if (!detail || purchaseBusy) return;
+    const title = purchaseForm.title.trim();
+    if (!title) return;
+    const amountDigits = purchaseForm.amount.replace(/\s+/g, '').replace(',', '.');
+    const amount = amountDigits ? Number(amountDigits) : null;
+    setPurchaseBusy(true);
+    const res = await api('/api/admin/purchases', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        visitorId: detail.visitor.id,
+        title,
+        amount: amount !== null && Number.isFinite(amount) ? amount : null,
+        status: purchaseForm.status,
+      }),
+    });
+    setPurchaseBusy(false);
+    if (res.ok) {
+      setPurchaseForm({ title: '', amount: '', status: 'completed' });
+      void loadDetail(detail.visitor.id);
+    }
+  }
+
+  async function removePurchase(id: string) {
+    if (!detail || purchaseBusy) return;
+    setPurchaseBusy(true);
+    const res = await api(`/api/admin/purchases/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setPurchaseBusy(false);
+    if (res.ok) void loadDetail(detail.visitor.id);
   }
 
   return (
@@ -336,6 +417,18 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   </div>
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1 text-xs text-slate-500">
+                      День рождения
+                      <input
+                        value={form.birthday}
+                        onChange={(e) => setForm({ ...form, birthday: e.target.value })}
+                        placeholder="05.03 или 05.03.1990"
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     {CONTACT_LABELS.map(({ key, label }) => (
                       <label key={key} className="space-y-1 text-xs text-slate-500">
                         {label}
@@ -359,6 +452,29 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                       className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
                     />
                   </label>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1 text-xs text-slate-500">
+                      Предпочтения (по одному в строке)
+                      <textarea
+                        rows={3}
+                        value={form.preferences}
+                        onChange={(e) => setForm({ ...form, preferences: e.target.value })}
+                        placeholder={'любит оверсайз\nне любит кожу'}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                      />
+                    </label>
+                    <label className="space-y-1 text-xs text-slate-500">
+                      Претензии (по одной в строке)
+                      <textarea
+                        rows={3}
+                        value={form.complaints}
+                        onChange={(e) => setForm({ ...form, complaints: e.target.value })}
+                        placeholder="задержали прошлый заказ"
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                      />
+                    </label>
+                  </div>
 
                   <div className="mt-2 flex flex-wrap items-center gap-4">
                     <label className="flex items-center gap-2 text-xs text-slate-600">
@@ -401,6 +517,79 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                       </ul>
                     </details>
                   )}
+                </div>
+
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Покупки ({(detail.purchases ?? []).length})
+                  </p>
+                  {!detail.purchasesAvailable && (
+                    <p className="mt-2 text-[11px] text-amber-700">
+                      Покупки требуют миграции sql/0004_card.sql.
+                    </p>
+                  )}
+                  {(detail.purchases ?? []).length === 0 ? (
+                    <p className="mt-2 text-[11px] text-slate-400">Покупок пока нет.</p>
+                  ) : (
+                    <ul className="mt-2 divide-y divide-slate-100">
+                      {(detail.purchases ?? []).map((purchase) => (
+                        <li key={purchase.id} className="flex flex-wrap items-center gap-2 py-2 text-[11px]">
+                          <span className="text-slate-400">{formatDate(purchase.orderedAt)}</span>
+                          <span className="font-medium text-slate-700">{purchase.title}</span>
+                          {purchase.amount !== null && (
+                            <span className="text-slate-500">
+                              {purchase.amount.toLocaleString('ru-RU')}{' '}
+                              {purchase.currency === 'RUB' ? '₽' : purchase.currency}
+                            </span>
+                          )}
+                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
+                            {PURCHASE_STATUS_LABELS[purchase.status] ?? purchase.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void removePurchase(purchase.id)}
+                            disabled={purchaseBusy}
+                            className="ml-auto text-slate-400 hover:text-red-600 disabled:opacity-50"
+                          >
+                            удалить
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_110px_130px_auto]">
+                    <input
+                      value={purchaseForm.title}
+                      onChange={(e) => setPurchaseForm({ ...purchaseForm, title: e.target.value })}
+                      placeholder="Пуховик Arctic"
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      value={purchaseForm.amount}
+                      onChange={(e) => setPurchaseForm({ ...purchaseForm, amount: e.target.value })}
+                      placeholder="12 900"
+                      inputMode="numeric"
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-500"
+                    />
+                    <select
+                      value={purchaseForm.status}
+                      onChange={(e) => setPurchaseForm({ ...purchaseForm, status: e.target.value })}
+                      className="rounded-xl border border-slate-300 px-2 py-2 text-xs text-slate-900 outline-none focus:border-indigo-500"
+                    >
+                      <option value="completed">куплено</option>
+                      <option value="pending">в процессе</option>
+                      <option value="canceled">отменена</option>
+                      <option value="refunded">возврат</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void addPurchase()}
+                      disabled={purchaseBusy || !purchaseForm.title.trim()}
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 disabled:opacity-50"
+                    >
+                      Добавить
+                    </button>
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-slate-100 p-4">

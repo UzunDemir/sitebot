@@ -1,12 +1,15 @@
 /**
- * Visitor card storage (sql/0003_seller.sql): identity, extracted facts,
- * owner notes and tags.
+ * Visitor card storage (sql/0003_seller.sql + sql/0004_card.sql): identity,
+ * extracted facts, owner notes, birthday, preferences, complaints.
  *
- * Everything here is best-effort: until the migration is applied the app
- * keeps working — ensureVisitor() returns null and callers skip memory work.
+ * Everything here is best-effort and schema-aware: until 0003 is applied the
+ * app keeps working (ensureVisitor returns null); until 0004 is applied the
+ * extended fields fall back to empty values (`schema_v4 = false`), and
+ * writers must NOT include 0004 columns in their patches.
  */
 
 import { getSupabase } from './supabase';
+import { isMissingColumnError } from './bot-settings';
 
 export type VisitorContacts = Record<string, string>;
 
@@ -23,13 +26,27 @@ export type VisitorRow = {
   meta: Record<string, unknown>;
   first_seen: string;
   last_seen: string;
+  /** sql/0004: день рождения (год может быть неизвестен). */
+  birthday_day: number | null;
+  birthday_month: number | null;
+  birthday_year: number | null;
+  /** sql/0004: предпочтения и претензии (авто + правка владельца). */
+  preferences: string[];
+  complaints: string[];
+  /** true = строка прочитана с колонками 0004 (можно писать их в апдейтах). */
+  schema_v4: boolean;
 };
 
 /** Keys allowed inside visitors.contacts (everything else is dropped). */
 export const CONTACT_KEYS = ['phone', 'email', 'telegram', 'whatsapp', 'vk', 'instagram', 'other'] as const;
 
+/** Columns of 0003. */
 export const VISITOR_COLUMNS =
   'id, bot_id, visitor_key, name, contacts, tags, notes, memory_digest, do_not_disturb, meta, first_seen, last_seen';
+
+/** Columns of 0003 + 0004 (used first; on a missing column we fall back). */
+export const VISITOR_COLUMNS_V4 =
+  VISITOR_COLUMNS + ', birthday_day, birthday_month, birthday_year, preferences, complaints';
 
 /** True when PostgREST reports a missing table (sql/0003 not applied yet). */
 export function isMissingRelationError(err: unknown): boolean {
@@ -43,8 +60,21 @@ export function isMissingRelationError(err: unknown): boolean {
   );
 }
 
+function intOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 /** Normalize a raw DB row (jsonb/array columns may hold anything). */
-export function parseVisitorRow(row: Record<string, unknown>): VisitorRow {
+export function parseVisitorRow(row: Record<string, unknown>, schemaV4 = false): VisitorRow {
   const contacts =
     row.contacts && typeof row.contacts === 'object' && !Array.isArray(row.contacts)
       ? (row.contacts as VisitorContacts)
@@ -56,7 +86,7 @@ export function parseVisitorRow(row: Record<string, unknown>): VisitorRow {
     visitor_key: String(row.visitor_key),
     name: typeof row.name === 'string' && row.name.trim() ? row.name.trim() : null,
     contacts,
-    tags: Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : [],
+    tags: stringList(row.tags),
     notes: typeof row.notes === 'string' ? row.notes : '',
     memory_digest: typeof row.memory_digest === 'string' ? row.memory_digest : '',
     do_not_disturb: row.do_not_disturb === true,
@@ -66,6 +96,12 @@ export function parseVisitorRow(row: Record<string, unknown>): VisitorRow {
         : {},
     first_seen: typeof row.first_seen === 'string' ? row.first_seen : now,
     last_seen: typeof row.last_seen === 'string' ? row.last_seen : now,
+    birthday_day: intOrNull(row.birthday_day),
+    birthday_month: intOrNull(row.birthday_month),
+    birthday_year: intOrNull(row.birthday_year),
+    preferences: stringList(row.preferences),
+    complaints: stringList(row.complaints),
+    schema_v4: schemaV4,
   };
 }
 
@@ -122,16 +158,17 @@ export async function attachConversationToVisitor(
 export async function getVisitorById(visitorId: string): Promise<VisitorRow | null> {
   try {
     const supabase = getSupabase();
-    const { data, error } = await supabase
-      .from('visitors')
-      .select(VISITOR_COLUMNS)
-      .eq('id', visitorId)
-      .maybeSingle();
-    if (error) {
-      if (!isMissingRelationError(error)) console.warn('[visitors] load failed:', error.message);
+    let res = await supabase.from('visitors').select(VISITOR_COLUMNS_V4).eq('id', visitorId).maybeSingle();
+    let schemaV4 = true;
+    if (res.error && isMissingColumnError(res.error)) {
+      res = await supabase.from('visitors').select(VISITOR_COLUMNS).eq('id', visitorId).maybeSingle();
+      schemaV4 = false;
+    }
+    if (res.error) {
+      if (!isMissingRelationError(res.error)) console.warn('[visitors] load failed:', res.error.message);
       return null;
     }
-    return data ? parseVisitorRow(data as Record<string, unknown>) : null;
+    return res.data ? parseVisitorRow(res.data as unknown as Record<string, unknown>, schemaV4) : null;
   } catch (err) {
     console.warn('[visitors] load error:', err);
     return null;
@@ -141,17 +178,27 @@ export async function getVisitorById(visitorId: string): Promise<VisitorRow | nu
 export async function loadVisitorByKey(botId: string, visitorKey: string): Promise<VisitorRow | null> {
   try {
     const supabase = getSupabase();
-    const { data, error } = await supabase
+    let res = await supabase
       .from('visitors')
-      .select(VISITOR_COLUMNS)
+      .select(VISITOR_COLUMNS_V4)
       .eq('bot_id', botId)
       .eq('visitor_key', visitorKey)
       .maybeSingle();
-    if (error) {
-      if (!isMissingRelationError(error)) console.warn('[visitors] load by key failed:', error.message);
+    let schemaV4 = true;
+    if (res.error && isMissingColumnError(res.error)) {
+      res = await supabase
+        .from('visitors')
+        .select(VISITOR_COLUMNS)
+        .eq('bot_id', botId)
+        .eq('visitor_key', visitorKey)
+        .maybeSingle();
+      schemaV4 = false;
+    }
+    if (res.error) {
+      if (!isMissingRelationError(res.error)) console.warn('[visitors] load by key failed:', res.error.message);
       return null;
     }
-    return data ? parseVisitorRow(data as Record<string, unknown>) : null;
+    return res.data ? parseVisitorRow(res.data as unknown as Record<string, unknown>, schemaV4) : null;
   } catch (err) {
     console.warn('[visitors] load by key error:', err);
     return null;
@@ -159,7 +206,21 @@ export async function loadVisitorByKey(botId: string, visitorKey: string): Promi
 }
 
 export type VisitorProfilePatch = Partial<
-  Pick<VisitorRow, 'name' | 'contacts' | 'tags' | 'notes' | 'memory_digest' | 'do_not_disturb' | 'meta'>
+  Pick<
+    VisitorRow,
+    | 'name'
+    | 'contacts'
+    | 'tags'
+    | 'notes'
+    | 'memory_digest'
+    | 'do_not_disturb'
+    | 'meta'
+    | 'birthday_day'
+    | 'birthday_month'
+    | 'birthday_year'
+    | 'preferences'
+    | 'complaints'
+  >
 >;
 
 export async function updateVisitorProfile(
@@ -212,7 +273,7 @@ export async function recordEvent(input: {
 
 /**
  * «Забыть меня»: removes the visitor card, their conversations (messages
- * cascade) and events. Idempotent, never throws.
+ * cascade), events and purchases (0004). Idempotent, never throws.
  */
 export async function deleteVisitorData(
   botId: string,
@@ -244,6 +305,10 @@ export async function deleteVisitorData(
     const evts = await supabase.from('events').delete().eq('visitor_id', visitor.id);
     if (evts.error && !isMissingRelationError(evts.error)) {
       console.warn('[visitors] forget events failed:', evts.error.message);
+    }
+    const buys = await supabase.from('purchases').delete().eq('visitor_id', visitor.id);
+    if (buys.error && !isMissingRelationError(buys.error)) {
+      console.warn('[visitors] forget purchases failed:', buys.error.message);
     }
     const card = await supabase.from('visitors').delete().eq('id', visitor.id);
     if (card.error) console.warn('[visitors] forget card failed:', card.error.message);

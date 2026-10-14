@@ -105,6 +105,15 @@ function paletteOf(t: WidgetTheme): Palette {
   };
 }
 
+/** IANA-таймзона браузера — «осознание времени» на сервере (Ф3). */
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export function Chat({
   bot,
   theme,
@@ -198,7 +207,7 @@ export function Chat({
     () =>
       new DefaultChatTransport({
         api: '/api/chat',
-        body: { botKey: bot.publicKey, sessionKey, visitorKey },
+        body: { botKey: bot.publicKey, sessionKey, visitorKey, tz: browserTimeZone() },
       }),
     [bot.publicKey, sessionKey, visitorKey],
   );

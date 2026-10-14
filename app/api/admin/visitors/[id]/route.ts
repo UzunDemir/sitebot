@@ -1,20 +1,30 @@
 /**
- * Admin visitor card: detail (conversations + event feed) and editing
- * (name, contacts, tags, notes, do-not-disturb).
+ * Admin visitor card: detail (conversations, purchases, event feed) and
+ * editing (name, birthday, contacts, tags, notes, preferences, complaints,
+ * do-not-disturb).
  *
  * GET   /api/admin/visitors/[id]
  * PATCH /api/admin/visitors/[id]
+ *
+ * Falls back gracefully on the pre-0004 schema (extended fields skipped).
  */
 
 import { adminGuard } from '@/lib/admin-auth';
 import { getSupabase } from '@/lib/supabase';
 import { isMissingColumnError } from '@/lib/bot-settings';
-import { CONTACT_KEYS, isMissingRelationError, parseVisitorRow } from '@/lib/visitors';
+import {
+  CONTACT_KEYS,
+  isMissingRelationError,
+  parseVisitorRow,
+  VISITOR_COLUMNS,
+  VISITOR_COLUMNS_V4,
+  type VisitorRow,
+} from '@/lib/visitors';
+import { formatBirthday, makeBirthday, parseBirthday, serializeBirthday } from '@/lib/birthday';
+import { listPurchases, purchasesAvailable } from '@/lib/purchases';
 
-const VISITOR_COLUMNS =
-  'id, bot_id, visitor_key, name, contacts, tags, notes, memory_digest, do_not_disturb, meta, first_seen, last_seen';
-
-function clientShape(visitor: ReturnType<typeof parseVisitorRow>) {
+function clientShape(visitor: VisitorRow) {
+  const birthday = makeBirthday(visitor.birthday_day, visitor.birthday_month, visitor.birthday_year);
   return {
     id: visitor.id,
     visitorKey: visitor.visitor_key,
@@ -24,9 +34,31 @@ function clientShape(visitor: ReturnType<typeof parseVisitorRow>) {
     notes: visitor.notes,
     memoryDigest: visitor.memory_digest,
     doNotDisturb: visitor.do_not_disturb,
+    birthday: birthday ? serializeBirthday(birthday) : null,
+    birthdayText: birthday ? formatBirthday(birthday) : null,
+    preferences: visitor.preferences,
+    complaints: visitor.complaints,
     firstSeen: visitor.first_seen,
     lastSeen: visitor.last_seen,
   };
+}
+
+/** Read the card with 0004 columns; false when the row came without them. */
+async function loadCard(
+  supabase: ReturnType<typeof getSupabase>,
+  id: string,
+): Promise<{ visitor: VisitorRow | null; available: boolean }> {
+  let res = await supabase.from('visitors').select(VISITOR_COLUMNS_V4).eq('id', id).maybeSingle();
+  let schemaV4 = true;
+  if (res.error && isMissingColumnError(res.error)) {
+    res = await supabase.from('visitors').select(VISITOR_COLUMNS).eq('id', id).maybeSingle();
+    schemaV4 = false;
+  }
+  if (res.error) {
+    if (isMissingRelationError(res.error)) return { visitor: null, available: false };
+    throw res.error;
+  }
+  return { visitor: res.data ? parseVisitorRow(res.data as unknown as Record<string, unknown>, schemaV4) : null, available: true };
 }
 
 export async function GET(
@@ -40,17 +72,9 @@ export async function GET(
 
   try {
     const supabase = getSupabase();
-    const row = await supabase.from('visitors').select(VISITOR_COLUMNS).eq('id', id).maybeSingle();
-    if (row.error) {
-      if (isMissingRelationError(row.error)) {
-        return Response.json({ available: false });
-      }
-      throw row.error;
-    }
-    if (!row.data) {
-      return Response.json({ error: 'not_found' }, { status: 404 });
-    }
-    const visitor = parseVisitorRow(row.data as Record<string, unknown>);
+    const { visitor, available } = await loadCard(supabase, id);
+    if (!available) return Response.json({ available: false });
+    if (!visitor) return Response.json({ error: 'not_found' }, { status: 404 });
 
     // Conversations of this visitor (stage/outcome arrive with sql/0003).
     let conversations: Array<Record<string, unknown>> = [];
@@ -100,9 +124,22 @@ export async function GET(
       .limit(30);
     if (!evRes.error) events = (evRes.data ?? []) as Array<Record<string, unknown>>;
 
+    // Purchases (sql/0004).
+    const purchases = await listPurchases(visitor.id, 20);
+    const purchasesReady = purchases.length > 0 || (await purchasesAvailable());
+
     return Response.json({
       available: true,
       visitor: clientShape(visitor),
+      purchasesAvailable: purchasesReady,
+      purchases: purchases.map((purchase) => ({
+        id: purchase.id,
+        title: purchase.title,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        status: purchase.status,
+        orderedAt: purchase.orderedAt,
+      })),
       conversations: conversations.map((c) => ({
         id: String(c.id),
         createdAt: c.created_at ?? null,
@@ -138,6 +175,8 @@ export async function PATCH(
   }
 
   const patch: Record<string, unknown> = {};
+  const extPatch: Record<string, unknown> = {};
+
   if (typeof body.name === 'string') {
     const name = body.name.trim().replace(/\s+/g, ' ').slice(0, 80);
     patch.name = name || null;
@@ -167,20 +206,65 @@ export async function PATCH(
     patch.do_not_disturb = body.do_not_disturb;
   }
 
-  if (Object.keys(patch).length === 0) {
+  // --- sql/0004 extensions
+  if (typeof body.birthday === 'string') {
+    const raw = body.birthday.trim();
+    if (!raw) {
+      extPatch.birthday_day = null;
+      extPatch.birthday_month = null;
+      extPatch.birthday_year = null;
+    } else {
+      const parsed = parseBirthday(raw);
+      if (!parsed) {
+        return Response.json({ error: 'bad_birthday' }, { status: 400 });
+      }
+      extPatch.birthday_day = parsed.day;
+      extPatch.birthday_month = parsed.month;
+      extPatch.birthday_year = parsed.year;
+    }
+  }
+  for (const key of ['preferences', 'complaints'] as const) {
+    if (Array.isArray(body[key])) {
+      extPatch[key] = (body[key] as unknown[])
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim().replace(/\s+/g, ' ').slice(0, key === 'preferences' ? 60 : 160))
+        .filter(Boolean)
+        .slice(0, 8);
+    }
+  }
+
+  if (Object.keys(patch).length === 0 && Object.keys(extPatch).length === 0) {
     return Response.json({ error: 'nothing_to_update' }, { status: 400 });
   }
 
   try {
     const supabase = getSupabase();
-    const upd = await supabase.from('visitors').update(patch).eq('id', id).select(VISITOR_COLUMNS).single();
-    if (upd.error) {
-      if (isMissingRelationError(upd.error)) {
+
+    // Try the full update; on a missing 0004 column retry without extensions.
+    let updated: VisitorRow | null = null;
+    let res = await supabase
+      .from('visitors')
+      .update({ ...patch, ...extPatch })
+      .eq('id', id)
+      .select(VISITOR_COLUMNS_V4)
+      .single();
+    if (res.error && isMissingColumnError(res.error)) {
+      if (Object.keys(patch).length === 0) {
+        // The update carried only 0004 fields — without the migration there
+        // is nothing to write (the panel shows the migration hint).
+        return Response.json({ available: false, error: 'schema_v4_required' }, { status: 422 });
+      }
+      res = await supabase.from('visitors').update(patch).eq('id', id).select(VISITOR_COLUMNS).single();
+    }
+    if (res.error) {
+      if (isMissingRelationError(res.error)) {
         return Response.json({ available: false }, { status: 422 });
       }
-      throw upd.error;
+      throw res.error;
     }
-    return Response.json({ visitor: clientShape(parseVisitorRow(upd.data as Record<string, unknown>)) });
+    updated = parseVisitorRow(res.data as unknown as Record<string, unknown>, true);
+
+    return Response.json({ visitor: clientShape(updated) });
   } catch (err) {
     console.error('[admin] visitor update failed:', err);
     return Response.json({ error: 'internal' }, { status: 500 });

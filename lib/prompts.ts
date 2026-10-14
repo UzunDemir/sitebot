@@ -133,7 +133,7 @@ export function personalityRules(settings: BotSettings): string[] {
   return rules;
 }
 
-/** Visitor memory (sql/0003): injected so the bot never re-asks known facts. */
+/** Visitor memory (sql/0003/0004): injected so the bot never re-asks known facts. */
 export type VisitorMemoryContext = {
   name: string | null;
   contacts: Record<string, string>;
@@ -141,6 +141,14 @@ export type VisitorMemoryContext = {
   digest: string;
   stage: string;
   returning: boolean;
+  /** «5 марта» / «5 марта 1990» — день рождения из карточки. */
+  birthday: string | null;
+  /** Сегодня у посетителя день рождения (в его таймзоне). */
+  birthdayToday: boolean;
+  preferences: string[];
+  complaints: string[];
+  /** «2 покупки; последняя — «Пуховик Arctic», 12 900 ₽; всего на 24 400 ₽». */
+  purchases: string | null;
 };
 
 const STAGE_HINTS: Record<string, string> = {
@@ -157,13 +165,19 @@ const STAGE_HINTS: Record<string, string> = {
 function memoryBlock(memory: VisitorMemoryContext): string | null {
   const lines: string[] = [];
   if (memory.name) lines.push(`Имя: ${memory.name}`);
+  if (memory.birthday) {
+    lines.push(`День рождения: ${memory.birthday}${memory.birthdayToday ? ' — СЕГОДНЯ! Поздравь уместно.' : ''}`);
+  }
   const contacts = Object.entries(memory.contacts)
     .slice(0, 5)
     .map(([key, value]) => `${key}: ${value}`)
     .join('; ');
   if (contacts) lines.push(`Контакты: ${contacts}`);
   if (memory.interests.length > 0) lines.push(`Интересы: ${memory.interests.slice(0, 5).join(', ')}`);
+  if (memory.preferences.length > 0) lines.push(`Предпочтения: ${memory.preferences.slice(0, 6).join('; ')}`);
+  if (memory.complaints.length > 0) lines.push(`Претензии (не игнорируй, предложи решение): ${memory.complaints.slice(0, 4).join('; ')}`);
   if (memory.digest) lines.push(`Заметки: ${memory.digest.slice(0, 600)}`);
+  if (memory.purchases) lines.push(`Покупки: ${memory.purchases}`);
   const stage = STAGE_HINTS[memory.stage];
   if (stage) lines.push(`Стадия диалога: ${stage}`);
   if (lines.length === 0) return null;
@@ -179,6 +193,7 @@ export function buildSystemPrompt(
   sources: RetrievedChunk[],
   settings: BotSettings = {},
   memory?: VisitorMemoryContext,
+  nowText?: string,
 ): string {
   const context = sources
     .map((source, index) => {
@@ -201,6 +216,15 @@ export function buildSystemPrompt(
   const tone = toneRule(settings.tone ?? 50);
   if (tone) blocks.push(tone);
   blocks.push(...personalityRules(settings));
+  if (nowText) {
+    blocks.push(
+      [
+        `Сейчас: ${nowText}.`,
+        'Учитывай текущие дату, день недели и время суток: сроки («сегодня», «завтра»), приветствия по времени дня, планы и поздравления.',
+        'Не выдумывай даты и не противоречь этому блоку.',
+      ].join('\n'),
+    );
+  }
   const memoryText = memory ? memoryBlock(memory) : null;
   if (memoryText) blocks.push(memoryText);
 

@@ -8,13 +8,17 @@
  * password) for verification and cleanup.
  *
  * Checks:
- *   1. chat with visitorKey -> the card gets the name and phone (LLM extraction)
+ *   1. chat with visitorKey -> the card gets the name, phone, birthday and
+ *      preferences (LLM extraction, sql/0004 fields)
  *   2. the conversation is linked to the visitor
  *   3. POST /api/events stores session_start; an unknown type is rejected
  *   4. GET /api/chat/history returns { visitor: { name, returning } }
- *   5. admin API: the list contains the card; PATCH saves notes/tags;
- *      the detail returns them with conversations and events
- *   6. POST /api/chat/forget erases the card, dialogs and events
+ *   5. admin API: the list contains the card; PATCH saves notes/tags/birthday/
+ *      preferences; purchases can be added and deleted; the detail returns
+ *      all of it with conversations and events
+ *   6. POST /api/chat/forget erases the card, dialogs, events and purchases
+ *
+ * Requires sql/0003_seller.sql and sql/0004_card.sql.
  *
  * Usage: npm run smoke:visitor
  */
@@ -56,7 +60,8 @@ function isMissingRelation(err) {
 
 const NAME = 'Игорь';
 const PHONE_LINE = 'мой телефон 8-800-555-35-35';
-const FIRST_MESSAGE = `Здравствуйте! Меня зовут ${NAME}, ${PHONE_LINE}. Интересует доставка пуховиков.`;
+const BIRTHDAY_LINE = 'у меня день рождения 5 марта';
+const FIRST_MESSAGE = `Здравствуйте! Меня зовут ${NAME}, ${PHONE_LINE}, ${BIRTHDAY_LINE}. Интересует доставка пуховиков, люблю оверсайз.`;
 
 // --- local server management (same pattern as the other smokes)
 const child = MANAGE_SERVER
@@ -120,6 +125,11 @@ try {
     }
     throw probe.error;
   }
+  const probePurchases = await supabase.from('purchases').select('id').limit(1);
+  if (probePurchases.error && isMissingRelation(probePurchases.error)) {
+    console.error('❌ Таблицы purchases нет: выполните sql/0004_card.sql в Supabase SQL Editor.');
+    process.exit(1);
+  }
 
   console.log(MANAGE_SERVER ? '── ожидание сервера (npm run start) ──' : `── проверка ${BASE} ──`);
   const up = await waitForServer();
@@ -169,13 +179,15 @@ try {
     await sleep(2000);
     const cardRes = await supabase
       .from('visitors')
-      .select('id, name, contacts, memory_digest, first_seen, last_seen')
+      .select(
+        'id, name, contacts, memory_digest, first_seen, last_seen, birthday_day, birthday_month, birthday_year, preferences, complaints',
+      )
       .eq('bot_id', bot.id)
       .eq('visitor_key', visitorKey)
       .maybeSingle();
     if (cardRes.error) throw cardRes.error;
     card = cardRes.data;
-    if (card && card.name && digitsOf(card.contacts?.phone).length >= 7) break;
+    if (card && card.name && digitsOf(card.contacts?.phone).length >= 7 && card.birthday_month === 3) break;
   }
   cardId = card?.id ?? null;
   check('карточка создана', Boolean(card), card ? `id ${card.id}` : 'нет');
@@ -185,6 +197,16 @@ try {
     card?.name ?? '—',
   );
   check('телефон извлечён в контакты', digitsOf(card?.contacts?.phone).length >= 7, card?.contacts?.phone ?? '—');
+  check(
+    'дата рождения извлечена (5 марта)',
+    card?.birthday_day === 5 && card?.birthday_month === 3,
+    card ? `${card.birthday_day}.${card.birthday_month}` : '—',
+  );
+  check(
+    'предпочтения извлечены',
+    (card?.preferences ?? []).length >= 1,
+    JSON.stringify(card?.preferences ?? []),
+  );
 
   // --- 2) the conversation is linked to the visitor
   const convRes = await supabase
@@ -257,13 +279,22 @@ try {
   const patchRes = await fetch(`${BASE}/api/admin/visitors/${cardId}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ notes: noteText, tags: 'смоук, проверка' }),
+    body: JSON.stringify({
+      notes: noteText,
+      tags: 'смоук, проверка',
+      birthday: '01.12',
+      preferences: ['любит смоук-тесты'],
+    }),
   });
   const patchJson = await patchRes.json().catch(() => null);
   check(
-    'заметка и теги сохраняются',
-    patchRes.ok && patchJson?.visitor?.notes === noteText && (patchJson?.visitor?.tags ?? []).length === 2,
-    patchJson?.visitor ? `tags=${JSON.stringify(patchJson.visitor.tags)}` : `HTTP ${patchRes.status}`,
+    'заметка, теги, ДР и предпочтения сохраняются',
+    patchRes.ok &&
+      patchJson?.visitor?.notes === noteText &&
+      (patchJson?.visitor?.tags ?? []).length === 2 &&
+      patchJson?.visitor?.birthday === '01.12' &&
+      (patchJson?.visitor?.preferences ?? []).includes('любит смоук-тесты'),
+    patchJson?.visitor ? `birthday=${patchJson.visitor.birthday}` : `HTTP ${patchRes.status}`,
   );
 
   const detailRes = await fetch(`${BASE}/api/admin/visitors/${cardId}`, { headers: { cookie } });
@@ -272,9 +303,51 @@ try {
     'карточка в админке: заметки, беседы, события',
     detailRes.ok &&
       detailJson?.visitor?.notes === noteText &&
+      detailJson?.purchasesAvailable === true &&
       (detailJson?.conversations ?? []).length >= 1 &&
       (detailJson?.events ?? []).length >= 1,
     `бесед: ${(detailJson?.conversations ?? []).length}, событий: ${(detailJson?.events ?? []).length}`,
+  );
+
+  // --- 5b) purchases (sql/0004): add via admin API, see in the card, delete
+  const buyRes = await fetch(`${BASE}/api/admin/purchases`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ visitorId: cardId, title: 'Смоук-пуховик', amount: 1234, status: 'completed' }),
+  });
+  const buyJson = await buyRes.json().catch(() => null);
+  const buyId = buyJson?.purchase?.id ?? '';
+  check(
+    'покупка добавлена',
+    buyRes.ok && buyJson?.purchase?.title === 'Смоук-пуховик' && buyJson?.purchase?.amount === 1234,
+    `HTTP ${buyRes.status}`,
+  );
+  const afterBuy = await fetch(`${BASE}/api/admin/visitors/${cardId}`, { headers: { cookie } });
+  const afterBuyJson = await afterBuy.json().catch(() => null);
+  check(
+    'покупка видна в карточке',
+    (afterBuyJson?.purchases ?? []).some((purchase) => purchase.id === buyId && purchase.title === 'Смоук-пуховик'),
+    `покупок: ${(afterBuyJson?.purchases ?? []).length}`,
+  );
+  if (buyId) {
+    const delBuy = await fetch(`${BASE}/api/admin/purchases/${encodeURIComponent(buyId)}`, {
+      method: 'DELETE',
+      headers: { cookie },
+    });
+    const delJson = await delBuy.json().catch(() => null);
+    check('покупка удалена', delBuy.ok && delJson?.ok === true, `HTTP ${delBuy.status}`);
+  }
+  // вторая покупка остаётся — проверяем каскад при «забыть меня»
+  const buy2 = await fetch(`${BASE}/api/admin/purchases`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ visitorId: cardId, title: 'Смоук-возврат', amount: 10, status: 'refunded' }),
+  });
+  const buy2Json = await buy2.json().catch(() => null);
+  check(
+    'вторая покупка добавлена (для каскада)',
+    buy2.ok && Boolean(buy2Json?.purchase?.id),
+    `HTTP ${buy2.status}`,
   );
 
   // --- 6) forget me
@@ -293,6 +366,8 @@ try {
   check('беседы удалены', (goneConv.data ?? []).length === 0, `осталось: ${(goneConv.data ?? []).length}`);
   const goneEvents = await supabase.from('events').select('id').eq('visitor_id', cardId);
   check('события удалены', (goneEvents.data ?? []).length === 0, `осталось: ${(goneEvents.data ?? []).length}`);
+  const gonePurchases = await supabase.from('purchases').select('id').eq('visitor_id', cardId);
+  check('покупки удалены (каскад)', (gonePurchases.data ?? []).length === 0, `осталось: ${(gonePurchases.data ?? []).length}`);
 } catch (err) {
   console.error('❌ smoke-visitor упал с ошибкой:', err instanceof Error ? err.message : err);
   failures += 1;
