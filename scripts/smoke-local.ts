@@ -52,7 +52,7 @@ import {
   quietHoursEnd,
   sanitizeNudgeText,
 } from '../lib/nudge';
-import { personalityRules } from '../lib/prompts';
+import { buildSystemPrompt, personalityRules } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
@@ -577,6 +577,25 @@ function main(): void {
       console.log(`  ✓ покупки: сводка «${summary}»`);
     } else {
       console.error(`❌ покупки: ${JSON.stringify({ summary, single, refundOnly })}`);
+      failures += 1;
+    }
+
+    // промпт: блок времени с запретом отказов
+    const promptText = buildSystemPrompt(
+      'Ты ассистент интернет-магазина.',
+      [],
+      {},
+      undefined,
+      'среда, 14 октября 2026 г., 15:00 (Europe/Moscow)',
+    );
+    if (
+      promptText.includes('Текущие дата и время: среда, 14 октября 2026') &&
+      promptText.includes('нет доступа к календарю') &&
+      promptText.includes('не отказывайся отвечать')
+    ) {
+      console.log('  ✓ промпт: блок времени + запрет отказов «нет доступа к календарю»');
+    } else {
+      console.error('❌ промпт: блок времени или запрет отказов потеряны');
       failures += 1;
     }
   }
