@@ -314,3 +314,35 @@ export async function updateConversationFields(
     console.warn('[chat-store] conversation update error:', err);
   }
 }
+
+/**
+ * Условный переход состояния: пишем, только если outcome всё ещё равен
+ * ожидаемому. Защищает от гонок («стратег vs сброс памяти»): устаревший
+ * проход не оживит беседу, которую уже закрыл «забыть меня».
+ * Возвращает true, если строка действительно обновилась.
+ */
+export async function updateConversationFieldsIf(
+  conversationId: string,
+  expectedOutcome: string,
+  patch: ConversationPatch,
+): Promise<boolean> {
+  try {
+    const supabase = getSupabase();
+    const upd = await supabase
+      .from('conversations')
+      .update(patch)
+      .eq('id', conversationId)
+      .eq('outcome', expectedOutcome)
+      .select('id');
+    if (upd.error) {
+      if (!isMissingColumnError(upd.error)) {
+        console.warn('[chat-store] conditional update failed:', upd.error.message);
+      }
+      return false;
+    }
+    return Array.isArray(upd.data) && upd.data.length > 0;
+  } catch (err) {
+    console.warn('[chat-store] conditional update error:', err);
+    return false;
+  }
+}

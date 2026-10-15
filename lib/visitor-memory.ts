@@ -12,7 +12,12 @@
 
 import { generateText } from 'ai';
 import { resolveModel } from './models';
-import { loadRecentMessages, updateConversationFields, loadConversationById } from './chat-store';
+import {
+  loadConversationById,
+  loadRecentMessages,
+  updateConversationFields,
+  updateConversationFieldsIf,
+} from './chat-store';
 import {
   CONTACT_KEYS,
   getVisitorById,
@@ -442,6 +447,12 @@ export async function runStrategist(
   });
   if (!result) return;
 
+  // Гонка «стратег vs сброс памяти»: во время LLM-прохода мог случиться
+  // «забыть меня» — тогда проход устарел целиком: ничего не пишем, карточка
+  // и стадии остаются на моменте снимка эпохи.
+  const freshConversation = await loadConversationById(conversationId);
+  if (freshConversation && freshConversation.outcome === 'memory_reset') return;
+
   // 1) Visitor card (facts).
   if (!factsAreEmpty(result.facts)) {
     const merged = mergeVisitorFacts(visitor, result.facts);
@@ -467,29 +478,36 @@ export async function runStrategist(
     await recordVisitorFacts({ botId: visitor.bot_id, visitorId, facts: result.facts });
   }
 
-  if (!conversation) return;
+  const state = freshConversation ?? conversation;
+  if (!state) return;
 
   // 2) Goal state: newly learned contact wins, otherwise the model's verdict
-  // (the instruction forbids counting card-only data as achieved).
+  // (the instruction forbids counting card-only data as achieved). Переход —
+  // условный (outcome=in_progress): сброс памяти, прилетевший в гонке, побеждает.
   const achieved =
     achievedByFreshContacts(context.goal, result.facts.contacts ?? {}, visitor.contacts) ||
     result.goalProgress === 'achieved';
 
-  if (achieved && conversation.outcome === 'in_progress') {
-    await updateConversationFields(conversationId, { outcome: 'goal_reached', stage: 'done' });
-    await recordEvent({
-      botId: conversation.botId,
-      visitorId,
-      conversationId,
-      type: 'goal_reached',
-      payload: { goal: context.goal },
+  if (achieved && state.outcome === 'in_progress') {
+    const moved = await updateConversationFieldsIf(conversationId, 'in_progress', {
+      outcome: 'goal_reached',
+      stage: 'done',
     });
+    if (moved) {
+      await recordEvent({
+        botId: state.botId,
+        visitorId,
+        conversationId,
+        type: 'goal_reached',
+        payload: { goal: context.goal },
+      });
+    }
     return;
   }
 
   // 3) Stage transitions (skip terminal states).
-  if (conversation.outcome !== 'in_progress') return;
-  if (result.stage && result.stage !== conversation.stage) {
+  if (state.outcome !== 'in_progress') return;
+  if (result.stage && result.stage !== state.stage) {
     if (result.stage === 'lost') {
       await updateConversationFields(conversationId, { stage: 'lost', outcome: 'lost' });
     } else if (result.stage !== 'done') {
