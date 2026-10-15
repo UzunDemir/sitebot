@@ -139,15 +139,19 @@ export async function getConversationId(botId: string, sessionKey: string): Prom
 export async function loadRecentMessages(
   conversationId: string,
   limit: number,
+  /** Активное окно памяти (sql/0005): только сообщения после этой границы. */
+  since?: Date | null,
 ): Promise<{ messages: StoredMessage[]; hasMore: boolean }> {
   const supabase = getSupabase();
-  const build = (columns: string) =>
-    supabase
+  const build = (columns: string) => {
+    const query = supabase
       .from('messages')
       .select(columns)
       .eq('conversation_id', conversationId)
       .order('id', { ascending: false })
       .limit(limit + 1);
+    return since ? query.gt('created_at', since.toISOString()) : query;
+  };
 
   // Fetch newest-first to enforce the window, then flip to chronological.
   let result = await build('id, role, content, citations, created_at, is_proactive');

@@ -39,15 +39,21 @@ function parsePurchase(row: Record<string, unknown>): PurchaseRow {
   };
 }
 
-export async function listPurchases(visitorId: string, limit = 20): Promise<PurchaseRow[]> {
+export async function listPurchases(
+  visitorId: string,
+  limit = 20,
+  /** Активное окно памяти (sql/0005): только покупки после этой границы. */
+  since?: Date | null,
+): Promise<PurchaseRow[]> {
   try {
     const supabase = getSupabase();
-    const res = await supabase
+    const query = supabase
       .from('purchases')
       .select(PURCHASE_COLUMNS)
       .eq('visitor_id', visitorId)
       .order('ordered_at', { ascending: false })
       .limit(limit);
+    const res = since ? await query.gt('ordered_at', since.toISOString()) : await query;
     if (res.error) {
       if (!isMissingRelationError(res.error)) console.warn('[purchases] list failed:', res.error.message);
       return [];

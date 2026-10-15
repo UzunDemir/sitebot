@@ -21,6 +21,7 @@ const EVENT_TYPES = new Set([
   'session_closed',
   'nudge_sent',
   'nudge_answered',
+  'memory_reset',
 ]);
 
 const MAX_PAYLOAD = 2000;

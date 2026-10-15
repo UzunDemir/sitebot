@@ -1,14 +1,19 @@
 /**
- * «Забыть меня»: the visitor erases their card, dialogs and events.
+ * «Забыть меня»: не удаление, а новая эпоха памяти (sql/0005_memory_reset.sql).
+ *
+ * Память посетителя никогда не удаляется: POST ставит маркер memory_resets —
+ * активная память бота начинается заново (карточка чистится, контекст модели
+ * строится только с этого момента), а архив (беседы, события, покупки)
+ * остаётся у владельца для анализа и стратегий.
  *
  * POST { botKey, visitorKey, sessionKey? }
  *
- * Idempotent and quiet: unknown visitors answer ok too. Deleting happens
- * server-side (service role); the widget rotates its local keys afterwards.
+ * Идемпотентно и тихо: неизвестный посетитель тоже получает ok. Локальные
+ * ключи виджета ротирует клиент: новая беседа, та же карточка-архив.
  */
 
 import { getSupabase } from '@/lib/supabase';
-import { deleteVisitorData } from '@/lib/visitors';
+import { softResetVisitor } from '@/lib/memory-window';
 
 type ForgetBody = {
   botKey?: string;
@@ -38,8 +43,13 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: 'not_found' }, { status: 404 });
     }
 
-    await deleteVisitorData(botId, visitorKey, body?.sessionKey?.trim() || undefined);
-    return Response.json({ ok: true });
+    const result = await softResetVisitor({
+      botId,
+      visitorKey,
+      source: 'button',
+      sessionKey: body?.sessionKey?.trim() || undefined,
+    });
+    return Response.json({ ok: result.ok, mode: 'soft' });
   } catch (err) {
     console.error('[forget] unhandled error:', err);
     return Response.json({ ok: false }, { status: 500 });

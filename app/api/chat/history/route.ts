@@ -25,6 +25,7 @@ import {
   type StoredMessage,
 } from '@/lib/chat-store';
 import { loadVisitorByKey } from '@/lib/visitors';
+import { getActiveSince } from '@/lib/memory-window';
 
 const HISTORY_DEFAULT_LIMIT = 100;
 const HISTORY_MAX_LIMIT = 200;
@@ -152,16 +153,17 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    const { messages, hasMore } = await loadRecentMessages(conversationId, limit);
+    // Активное окно памяти (sql/0005): после «забыть меня» лента и «с
+    // возвращением» строятся только по сообщениям новой эпохи.
+    const visitorRow = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
+    const activeSince = visitorRow ? await getActiveSince(visitorRow.id) : null;
+
+    const { messages, hasMore } = await loadRecentMessages(conversationId, limit, activeSince);
     const ratings = await loadRatings(
       messages.filter((message) => message.role === 'assistant').map((message) => message.id),
     );
     const showSources = settings.showSources !== false;
     const conversationMeta = await loadConversationById(conversationId);
-
-    // Welcome-back hint for the widget: who is returning (visitor card)
-    // and whether a stored dialog exists («с возвращением» bubble).
-    const visitorRow = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
     const returning = messages.length > 0;
     const visitor =
       visitorRow || returning ? { name: visitorRow?.name ?? null, returning } : null;

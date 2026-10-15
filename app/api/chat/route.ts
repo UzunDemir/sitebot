@@ -39,6 +39,8 @@ import {
 } from '@/lib/visitors';
 import { runStrategist } from '@/lib/visitor-memory';
 import { isStopRequest, STOP_REPLY } from '@/lib/nudge';
+import { FORGET_REPLY, isForgetRequest } from '@/lib/forget';
+import { getActiveSince, softResetVisitor } from '@/lib/memory-window';
 import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '@/lib/clock';
 import { formatBirthday, isBirthdayToday, makeBirthday, type Birthday } from '@/lib/birthday';
 import { listPurchases, summarizePurchases } from '@/lib/purchases';
@@ -209,6 +211,10 @@ export async function POST(req: Request): Promise<Response> {
     }
     const conversationMeta = conversationId ? await loadConversationById(conversationId) : null;
 
+    // --- активное окно памяти (sql/0005): после «забыть меня» модель, дожим и
+    // покупки видят только новую эпоху; архив остаётся в БД.
+    const activeSince = visitorId ? await getActiveSince(visitorId) : null;
+
     // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
     if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
       await recordEvent({
@@ -228,6 +234,21 @@ export async function POST(req: Request): Promise<Response> {
     if (conversationId && conversationMeta && conversationMeta.outcome === 'lost') {
       await updateConversationFields(conversationId, { outcome: 'in_progress' });
       await recordEvent({ botId: bot.id, visitorId, conversationId, type: 'dialog_resumed' });
+    } else if (conversationId && conversationMeta && conversationMeta.outcome === 'memory_reset') {
+      // После «забыть меня» посетитель написал снова — новая эпоха: чистое
+      // приветствие, счётчик касаний с нуля, дожим снова доступен.
+      await updateConversationFields(conversationId, {
+        outcome: 'in_progress',
+        stage: 'greeting',
+        nudges_sent: 0,
+      });
+      await recordEvent({
+        botId: bot.id,
+        visitorId,
+        conversationId,
+        type: 'dialog_resumed',
+        payload: { from: 'memory_reset' },
+      });
     } else if (conversationId && conversationMeta && conversationMeta.outcome === 'goal_reached') {
       await updateConversationFields(conversationId, {
         outcome: 'in_progress',
@@ -286,6 +307,52 @@ export async function POST(req: Request): Promise<Response> {
       return createUIMessageStreamResponse({ stream: stopStream });
     }
 
+    // --- «забудь»: детерминированный сценарий без модели (как стоп-слова и
+    // часы). Память никогда не удаляется: ставится новая эпоха, бот честно
+    // начинает с чистого листа, архив (беседы, события, покупки) остаётся.
+    if (isForgetRequest(query)) {
+      if (visitorId) {
+        await softResetVisitor({
+          botId: bot.id,
+          visitorKey,
+          source: 'chat',
+          sessionKey: sessionKey || undefined,
+        });
+      }
+      const forgetStream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: 'start' });
+          writer.write({ type: 'start-step' });
+          writer.write({ type: 'text-start', id: 'forget-reply' });
+          writer.write({ type: 'text-delta', id: 'forget-reply', delta: FORGET_REPLY });
+          writer.write({ type: 'text-end', id: 'forget-reply' });
+          if (conversationId) {
+            try {
+              const messageId = await saveAssistantMessage(conversationId, {
+                content: FORGET_REPLY,
+                citations: [],
+                model: bot.model_id,
+                inputTokens: 0,
+                outputTokens: 0,
+                costUsd: 0,
+                latencyMs: Date.now() - startedAt,
+              });
+              writer.write({
+                type: 'data-feedback',
+                id: 'feedback',
+                data: { messageId, conversationId },
+              });
+            } catch (err) {
+              console.warn('[chat] failed to persist forget reply:', err);
+            }
+          }
+          writer.write({ type: 'finish-step' });
+          writer.write({ type: 'finish' });
+        },
+      });
+      return createUIMessageStreamResponse({ stream: forgetStream });
+    }
+
     // --- часы и дата: отвечаем сами, без модели. В грязной истории модель
     // повторяла устаревшее время из прошлых реплик — код не может.
     const now = new Date();
@@ -336,7 +403,7 @@ export async function POST(req: Request): Promise<Response> {
       birthday = makeBirthday(visitorRow.birthday_day, visitorRow.birthday_month, visitorRow.birthday_year);
       if (birthday) birthdayToday = isBirthdayToday(birthday, nowInfo.timeZone, now);
       if (visitorRow.schema_v4) {
-        purchasesSummary = summarizePurchases(await listPurchases(visitorRow.id, 20));
+        purchasesSummary = summarizePurchases(await listPurchases(visitorRow.id, 20, activeSince));
       }
     }
 
@@ -369,7 +436,7 @@ export async function POST(req: Request): Promise<Response> {
     let modelMessages: ModelMessage[];
     if (conversationId) {
       const limit = depth === 0 ? MODEL_CONTEXT_MAX : depth;
-      const { messages: stored } = await loadRecentMessages(conversationId, limit);
+      const { messages: stored } = await loadRecentMessages(conversationId, limit, activeSince);
       modelMessages = stored.map((message) => ({
         role: message.role,
         content:

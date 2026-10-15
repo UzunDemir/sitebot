@@ -53,6 +53,7 @@ import {
   quietHoursEnd,
   sanitizeNudgeText,
 } from '../lib/nudge';
+import { isForgetRequest } from '../lib/forget';
 import { buildSystemPrompt, personalityRules, sanitizeEchoedRefusal } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
@@ -294,6 +295,35 @@ function main(): void {
     } else {
       console.error(
         `❌ isStopRequest: ${[...stops, ...notStops].map((t) => `${t}=${isStopRequest(t)}`).join(', ')}`,
+      );
+      failures += 1;
+    }
+
+    // «забудь всё» → новая эпоха памяти: явные просьбы ловим, темы — нет
+    const forgetStops = [
+      'забудь всё',
+      'забудь весь наш разговор',
+      'сотри всю переписку',
+      'удали мои данные',
+      'забудь меня',
+      'забудь всю историю',
+    ];
+    const forgetNotStops = [
+      'забудь про Баку',
+      'забудь про историю с доставкой',
+      'не забудь про скидку',
+      'расскажи про доставку',
+    ];
+    if (
+      forgetStops.every((t) => isForgetRequest(t)) &&
+      forgetNotStops.every((t) => !isForgetRequest(t))
+    ) {
+      console.log('  ✓ isForgetRequest: явные просьбы пойманы, темы и обычные фразы — нет');
+    } else {
+      console.error(
+        `❌ isForgetRequest: ${[...forgetStops, ...forgetNotStops]
+          .map((t) => `${t}=${isForgetRequest(t)}`)
+          .join(', ')}`,
       );
       failures += 1;
     }

@@ -89,7 +89,11 @@ export function readBrowserVisitorKey(publicKey: string): string {
   }
 }
 
-/** «Забыть меня»: a fresh identity for session and visitor (best effort). */
+/**
+ * Полная ротация локальной идентичности (задел для юридического hard-удаления:
+ * и сессия, и карточка). Виджет её больше не использует — «Забыть меня» теперь
+ * эпоха памяти (rotateSessionKey ниже), память не удаляется.
+ */
 export function resetBrowserIdentity(publicKey: string): { sessionKey: string; visitorKey: string } {
   const sessionKey = makeSessionId();
   const visitorKey = makeSessionId();
@@ -100,4 +104,19 @@ export function resetBrowserIdentity(publicKey: string): { sessionKey: string; v
     // storage unavailable — the fresh pair lives for this page only
   }
   return { sessionKey, visitorKey };
+}
+
+/**
+ * «Забыть меня» (эпоха памяти, sql/0005): новая беседа при сохранении
+ * карточки-архива. Память никогда не удаляется — сервер лишь открывает новую
+ * эпоху; виджет меняет только ключ сессии, visitorKey остаётся прежним.
+ */
+export function rotateSessionKey(publicKey: string): string {
+  const sessionKey = makeSessionId();
+  try {
+    window.localStorage.setItem(sessionStorageKey(publicKey), sessionKey);
+  } catch {
+    // storage unavailable — the fresh key lives for this page only
+  }
+  return sessionKey;
 }

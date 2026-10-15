@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
-import { readBrowserSessionKey, readBrowserVisitorKey, resetBrowserIdentity } from '@/lib/session-key';
+import { readBrowserSessionKey, readBrowserVisitorKey, rotateSessionKey } from '@/lib/session-key';
 
 export type ChatBotInfo = {
   publicKey: string;
@@ -529,7 +529,9 @@ export function Chat({
     setInput('');
   }
 
-  // Two-step «забыть меня»: server-side erase, then a fresh local identity.
+  // Two-step «забыть меня»: сервер открывает новую эпоху памяти (память не
+  // удаляется — архив остаётся у владельца), виджет начинает новую беседу с
+  // той же карточкой-архивом: sessionKey новый, visitorKey сохраняем.
   async function confirmForget() {
     if (!visitorKey) return;
     try {
@@ -539,9 +541,9 @@ export function Chat({
         body: JSON.stringify({ botKey: bot.publicKey, visitorKey, sessionKey }),
       });
     } catch {
-      // even if the request fails, wipe the local identity below
+      // even if the request fails, start the fresh dialog locally
     }
-    const fresh = resetBrowserIdentity(bot.publicKey);
+    const freshSession = rotateSessionKey(bot.publicKey);
     sessionStartedRef.current = false;
     setMessages([]);
     setVisitor(null);
@@ -550,8 +552,7 @@ export function Chat({
     unreadNudgesRef.current = 0;
     nudgesSentRef.current = 0;
     outcomeRef.current = 'in_progress';
-    setSessionKey(fresh.sessionKey);
-    setVisitorKey(fresh.visitorKey);
+    setSessionKey(freshSession);
     setForget(2);
     window.setTimeout(() => setForget(0), 4000);
   }
@@ -822,20 +823,20 @@ export function Chat({
           )}
           {forget === 1 && (
             <>
-              <span>Удалить карточку и всю переписку?</span>
+              <span>Забыть вас и начать с чистого листа?</span>
               <button
                 type="button"
                 onClick={() => void confirmForget()}
                 className="font-medium text-red-600 underline"
               >
-                Да, удалить
+                Да, забыть
               </button>
               <button type="button" onClick={() => setForget(0)} className="opacity-60 hover:opacity-100">
                 Отмена
               </button>
             </>
           )}
-          {forget === 2 && <span>Данные удалены.</span>}
+          {forget === 2 && <span>Готово — начинаем с чистого листа.</span>}
         </div>
       </form>
     </div>

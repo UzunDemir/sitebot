@@ -16,7 +16,7 @@
  *   5. admin API: the list contains the card; PATCH saves notes/tags/birthday/
  *      preferences; purchases can be added and deleted; the detail returns
  *      all of it with conversations and events
- *   6. POST /api/chat/forget erases the card, dialogs, events and purchases
+ *   6. POST /api/chat/forget opens a memory epoch (no deletion; see smoke:reset)
  *
  * Requires sql/0003_seller.sql and sql/0004_card.sql.
  *
@@ -337,7 +337,7 @@ try {
     const delJson = await delBuy.json().catch(() => null);
     check('покупка удалена', delBuy.ok && delJson?.ok === true, `HTTP ${delBuy.status}`);
   }
-  // вторая покупка остаётся — проверяем каскад при «забыть меня»
+  // вторая покупка остаётся — проверяем, что «забыть меня» её не трогает
   const buy2 = await fetch(`${BASE}/api/admin/purchases`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
@@ -350,24 +350,38 @@ try {
     `HTTP ${buy2.status}`,
   );
 
-  // --- 6) forget me
-  console.log('── /api/chat/forget ──');
+  // --- 6) forget me → новая эпоха памяти (память не удаляется)
+  console.log('── /api/chat/forget (эпоха) ──');
   const forgetRes = await fetch(`${BASE}/api/chat/forget`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ botKey: bot.public_key, visitorKey, sessionKey }),
   });
   const forgetJson = await forgetRes.json().catch(() => null);
-  check('/api/chat/forget → ok', forgetRes.ok && forgetJson?.ok === true, `HTTP ${forgetRes.status}`);
+  check(
+    '/api/chat/forget → ok (soft)',
+    forgetRes.ok && forgetJson?.ok === true && forgetJson?.mode === 'soft',
+    `HTTP ${forgetRes.status}`,
+  );
 
-  const gone = await supabase.from('visitors').select('id').eq('id', cardId).maybeSingle();
-  check('карточка удалена', !gone.data, gone.data ? 'всё ещё в базе' : '');
-  const goneConv = await supabase.from('conversations').select('id').eq('bot_id', bot.id).eq('session_key', sessionKey);
-  check('беседы удалены', (goneConv.data ?? []).length === 0, `осталось: ${(goneConv.data ?? []).length}`);
-  const goneEvents = await supabase.from('events').select('id').eq('visitor_id', cardId);
-  check('события удалены', (goneEvents.data ?? []).length === 0, `осталось: ${(goneEvents.data ?? []).length}`);
-  const gonePurchases = await supabase.from('purchases').select('id').eq('visitor_id', cardId);
-  check('покупки удалены (каскад)', (gonePurchases.data ?? []).length === 0, `осталось: ${(gonePurchases.data ?? []).length}`);
+  const kept = await supabase.from('visitors').select('id, name, memory_digest').eq('id', cardId).maybeSingle();
+  check('карточка сохранена (память не удаляется)', Boolean(kept.data?.id), kept.data ? '' : 'карточка исчезла');
+  check(
+    'активная память обнулена',
+    !kept.data?.name && !(kept.data?.memory_digest ?? ''),
+    `name=${kept.data?.name ?? 'null'}`,
+  );
+  const epoch = await supabase.from('memory_resets').select('id, source').eq('visitor_id', cardId);
+  check('эпоха записана (memory_resets)', (epoch.data ?? []).length === 1, `rows=${(epoch.data ?? []).length}`);
+  const keptConv = await supabase
+    .from('conversations')
+    .select('outcome')
+    .eq('bot_id', bot.id)
+    .eq('session_key', sessionKey)
+    .maybeSingle();
+  check('беседа закрыта (memory_reset)', keptConv.data?.outcome === 'memory_reset', `outcome=${keptConv.data?.outcome}`);
+  const keptPurchases = await supabase.from('purchases').select('id').eq('visitor_id', cardId);
+  check('покупки сохранены', (keptPurchases.data ?? []).length > 0, `rows=${(keptPurchases.data ?? []).length}`);
 } catch (err) {
   console.error('❌ smoke-visitor упал с ошибкой:', err instanceof Error ? err.message : err);
   failures += 1;

@@ -27,6 +27,7 @@ import {
   updateConversationFields,
 } from '@/lib/chat-store';
 import { loadVisitorByKey, recordEvent } from '@/lib/visitors';
+import { getActiveSince } from '@/lib/memory-window';
 import { describeNow } from '@/lib/clock';
 import { listPurchases, summarizePurchases } from '@/lib/purchases';
 import {
@@ -91,6 +92,7 @@ export async function POST(req: Request): Promise<Response> {
     if (
       conversation.outcome === 'goal_reached' ||
       conversation.outcome === 'stopped' ||
+      conversation.outcome === 'memory_reset' ||
       conversation.stage === 'done'
     ) {
       return deny('closed');
@@ -101,6 +103,10 @@ export async function POST(req: Request): Promise<Response> {
 
     const visitor = visitorKey ? await loadVisitorByKey(bot.id, visitorKey) : null;
     if (visitor?.do_not_disturb) return deny('dnd');
+
+    // Активное окно памяти (sql/0005): после «забыть меня» дожим молчит до
+    // первого сообщения новой эпохи.
+    const activeSince = visitor ? await getActiveSince(visitor.id) : null;
 
     const now = new Date();
 
@@ -123,12 +129,17 @@ export async function POST(req: Request): Promise<Response> {
     if (conversation.nudgesSent >= proactive.attempts) return deny('limit');
 
     // --- timing: silence since the last message or nudge (0.9 tolerance)
-    const { messages } = await loadRecentMessages(conversation.id, 12);
+    const { messages } = await loadRecentMessages(conversation.id, 12, activeSince);
     const lastMessageAt = messages.length > 0 ? new Date(messages[messages.length - 1].createdAt) : null;
     const lastNudgeAt = conversation.lastNudgeAt ? new Date(conversation.lastNudgeAt) : null;
     const lastActivity = [lastMessageAt, lastNudgeAt]
       .filter((value): value is Date => value !== null && !Number.isNaN(value.getTime()))
       .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+    // Новая эпоха ещё пуста (всё молчание было до сброса) — касание только
+    // после первого сообщения посетителя в текущей эпохе.
+    if (activeSince && lastActivity && lastActivity.getTime() < activeSince.getTime()) {
+      return deny('closed');
+    }
     const elapsedSec = lastActivity ? (now.getTime() - lastActivity.getTime()) / 1000 : Infinity;
     const requiredSec =
       conversation.nudgesSent === 0
