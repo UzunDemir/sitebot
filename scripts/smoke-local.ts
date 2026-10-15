@@ -21,6 +21,7 @@ import {
   visitorStorageKey,
 } from '../lib/session-key';
 import {
+  achievedByFreshContacts,
   appendDigestNote,
   factsAreEmpty,
   mergeListItems,
@@ -359,6 +360,22 @@ function main(): void {
       console.log('  ✓ стратег: стадия и прогресс цели разобраны, мусор отброшен');
     } else {
       console.error(`❌ стратег: ${JSON.stringify({ strat, stratJunk })}`);
+      failures += 1;
+    }
+
+    // достижение цели: закрывает беседу только НОВЫЙ контакт, не карточка
+    const freshAchieve =
+      achievedByFreshContacts('call', { phone: '+7 999' }, {}) === true &&
+      achievedByFreshContacts('call', { phone: '+7 999' }, { phone: '+7 111' }) === false &&
+      achievedByFreshContacts('phone', {}, {}) === false &&
+      achievedByFreshContacts('messenger', { telegram: '@a' }, {}) === true &&
+      achievedByFreshContacts('messenger', { telegram: '@a' }, { telegram: '@a' }) === false &&
+      achievedByFreshContacts('messenger', { phone: '+7 999' }, {}) === false &&
+      achievedByFreshContacts('none', { phone: '+7 999' }, {}) === false;
+    if (freshAchieve) {
+      console.log('  ✓ достижение цели: закрывает только новый контакт');
+    } else {
+      console.error('❌ achievedByFreshContacts: логика достижения сломана');
       failures += 1;
     }
 

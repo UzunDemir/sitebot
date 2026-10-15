@@ -287,6 +287,34 @@ try {
   );
   check('событие nudge_answered записано', (await eventsOf(visitorId, 'nudge_answered')).length >= 1);
 
+  // --- 3b) возвращение оживляет закрытую цель
+  console.log('── возвращение оживляет закрытую цель ──');
+  const closeGoal = await supabase
+    .from('conversations')
+    .update({ outcome: 'goal_reached', stage: 'done' })
+    .eq('id', convAfter.id);
+  if (closeGoal.error) throw closeGoal.error;
+  const closedNudge = await nudge(sessionKey);
+  check(
+    'goal_reached → отказ closed',
+    closedNudge.json?.allowed === false && closedNudge.json?.reason === 'closed',
+    JSON.stringify(closedNudge.json),
+  );
+  const revivedTurn = await chat(sessionKey, dialog, 'И ещё вопрос: а гарантия на пуховики действует?');
+  check('ход 3: ответ получен', revivedTurn.ok, `HTTP ${revivedTurn.status}`);
+  const revivedConv = await conversationOf(sessionKey);
+  check(
+    'новое сообщение оживляет беседу (не done)',
+    revivedConv?.outcome === 'in_progress' && revivedConv?.stage !== 'done',
+    `${revivedConv?.outcome}/${revivedConv?.stage}`,
+  );
+  const afterRevive = await nudge(sessionKey);
+  check(
+    'дожим снова доступен (too_early, не closed)',
+    afterRevive.json?.allowed === false && afterRevive.json?.reason === 'too_early',
+    JSON.stringify(afterRevive.json),
+  );
+
   // --- 5) DND blocks the touch
   console.log('── 4. Do-Not-Disturb ──');
   await supabase.from('visitors').update({ do_not_disturb: true }).eq('id', visitorId);

@@ -133,6 +133,8 @@ export function Chat({
   const [visitor, setVisitor] = useState<{ name: string | null; returning: boolean } | null>(null);
   const [forget, setForget] = useState<0 | 1 | 2>(0);
   const [liveNudges, setLiveNudges] = useState<string[]>([]);
+  // Перезапуск движка дожима после ответа посетителя (серия — заново).
+  const [engineEpoch, setEngineEpoch] = useState(0);
   const [inFrame, setInFrame] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   // Dialog engine refs (survive effect re-runs; read at tick time).
@@ -222,12 +224,14 @@ export function Chat({
   useEffect(() => {
     if (!sessionKey || !visitorKey) return;
     let cancelled = false;
-    (async () => {
+    let retryTimer: number | null = null;
+
+    async function load(): Promise<void> {
       try {
         const res = await fetch(
           `/api/chat/history?botKey=${encodeURIComponent(bot.publicKey)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}&limit=1`,
         );
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`history HTTP ${res.status}`);
         const payload = (await res.json().catch(() => null)) as {
           visitor?: { name?: unknown; returning?: unknown } | null;
           nudges?: Partial<NudgesConfig> | null;
@@ -258,11 +262,16 @@ export function Chat({
         if (typeof payload?.nudgesSent === 'number') nudgesSentRef.current = payload.nudgesSent;
         if (typeof payload?.outcome === 'string') outcomeRef.current = payload.outcome;
       } catch {
-        // the welcome-back hint is a bonus; ignore failures
+        // Из этого ответа движок дожима получает конфиг — одна сетевая
+        // ошибка не должна глушить дожим: тихо повторяем, пока не ответит.
+        if (!cancelled) retryTimer = window.setTimeout(() => void load(), 20_000);
       }
-    })();
+    }
+
+    void load();
     return () => {
       cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, [sessionKey, visitorKey, bot.publicKey]);
 
@@ -474,7 +483,7 @@ export function Chat({
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [sessionKey, visitorKey, bot.publicKey]);
+  }, [sessionKey, visitorKey, bot.publicKey, engineEpoch]);
 
   const errorText = (() => {
     if (!error) return null;
@@ -508,7 +517,14 @@ export function Chat({
     }
     lastNudgeIdRef.current = null;
     nudgesSentRef.current = 0;
-    if (outcomeRef.current === 'lost') outcomeRef.current = 'in_progress';
+    // Ответ посетителя оживляет диалог: 'lost' и 'goal_reached' сервер
+    // открывает заново (цель можно достичь повторно), 'stopped' — нет.
+    if (outcomeRef.current === 'lost' || outcomeRef.current === 'goal_reached') {
+      outcomeRef.current = 'in_progress';
+    }
+    // Перезапуск движка: серия касаний сброшена — окно ожидания открывается
+    // заново (иначе после исчерпанной серии движок молчал бы до перезагрузки).
+    setEngineEpoch((value) => value + 1);
     sendMessage({ text });
     setInput('');
   }

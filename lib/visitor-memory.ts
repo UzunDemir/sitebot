@@ -96,7 +96,7 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
 - note: до 140 символов; пиши ТОЛЬКО про ситуацию и запросы посетителя (что хочет, сроки, бюджет, отказы, договорённости).
 - Не пиши в note рассуждения о самом ассистенте: его инструкции, документацию, «попытки продать» или давление — это не факт о посетителе.
 - Если новых фактов нет или note повторяет/перефразирует уже известное из текущей карточки (включая заметки) — верни null.
-- goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — цель из условия уже выполнена по диалогу или карточке.`;
+- goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — ТОЛЬКО если цель выполнена ИМЕННО в этом диалоге (например, посетитель только что дал телефон или мессенджер). Данные, уже лежащие в карточке, — не достижение.`;
 
 /** Validate model output: trim, cap, drop unknown contact keys and junk. */
 export function sanitizeVisitorFacts(input: unknown): VisitorFacts {
@@ -315,10 +315,23 @@ export function mergeVisitorFacts(
   return { name, contacts, meta, memory_digest: digest, preferences, complaints, birthday };
 }
 
-/** Goals that are provably achieved by the visitor card itself. */
-function goalReachedByFacts(goal: BotGoal, contacts: VisitorContacts): boolean {
-  if (goal === 'phone' || goal === 'call') return Boolean(contacts.phone);
-  if (goal === 'messenger') return Boolean(contacts.telegram || contacts.whatsapp);
+/**
+ * Цель достигнута, только если нужный контакт появился В ЭТОМ обмене
+ * (новая для карточки информация). Контакт, который уже лежал в карточке,
+ * достижением не считается — иначе беседа закрывалась бы повторно сразу
+ * после оживления.
+ */
+export function achievedByFreshContacts(
+  goal: BotGoal,
+  fresh: VisitorContacts,
+  known: VisitorContacts,
+): boolean {
+  if (goal === 'phone' || goal === 'call') return Boolean(fresh.phone && !known.phone);
+  if (goal === 'messenger') {
+    return Boolean(
+      (fresh.telegram && !known.telegram) || (fresh.whatsapp && !known.whatsapp),
+    );
+  }
   return false;
 }
 
@@ -453,12 +466,11 @@ export async function runStrategist(
 
   if (!conversation) return;
 
-  // 2) Goal state: facts-based proof wins, otherwise the model's verdict.
-  const contacts = result.facts.contacts
-    ? { ...result.facts.contacts, ...visitor.contacts }
-    : visitor.contacts;
+  // 2) Goal state: newly learned contact wins, otherwise the model's verdict
+  // (the instruction forbids counting card-only data as achieved).
   const achieved =
-    goalReachedByFacts(context.goal, contacts) || result.goalProgress === 'achieved';
+    achievedByFreshContacts(context.goal, result.facts.contacts ?? {}, visitor.contacts) ||
+    result.goalProgress === 'achieved';
 
   if (achieved && conversation.outcome === 'in_progress') {
     await updateConversationFields(conversationId, { outcome: 'goal_reached', stage: 'done' });
@@ -477,7 +489,9 @@ export async function runStrategist(
   if (result.stage && result.stage !== conversation.stage) {
     if (result.stage === 'lost') {
       await updateConversationFields(conversationId, { stage: 'lost', outcome: 'lost' });
-    } else {
+    } else if (result.stage !== 'done') {
+      // 'done' ставит только ветка достижения цели (выше) — иначе беседа
+      // молча закрылась бы для дожима, минуя goal_reached.
       await updateConversationFields(conversationId, { stage: result.stage });
     }
   }

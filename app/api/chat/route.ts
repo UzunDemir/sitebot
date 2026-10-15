@@ -221,11 +221,29 @@ export async function POST(req: Request): Promise<Response> {
       await updateConversationFields(conversationId, { nudges_sent: 0 });
     }
 
-    // --- потерянный диалог оживает: посетитель снова пишет — стратегия и
-    // дожим продолжаются (глухие стопы — цель достигнута / стоп-слово).
+    // --- диалог оживает: посетитель снова пишет — стратегия и дожим
+    // продолжаются. 'lost' и ранее достигнутая цель ('goal_reached')
+    // открываются заново (цель можно достичь повторно); «стоп-слово»
+    // (outcome=stopped) и DND остаются глухими стопами.
     if (conversationId && conversationMeta && conversationMeta.outcome === 'lost') {
       await updateConversationFields(conversationId, { outcome: 'in_progress' });
       await recordEvent({ botId: bot.id, visitorId, conversationId, type: 'dialog_resumed' });
+    } else if (conversationId && conversationMeta && conversationMeta.outcome === 'goal_reached') {
+      await updateConversationFields(conversationId, {
+        outcome: 'in_progress',
+        stage: 'followup',
+      });
+      await recordEvent({
+        botId: bot.id,
+        visitorId,
+        conversationId,
+        type: 'dialog_resumed',
+        payload: { from: 'goal_reached' },
+      });
+    } else if (conversationId && conversationMeta && conversationMeta.stage === 'done') {
+      // Наследие: стадия done без goal_reached (старые записи) — снимаем,
+      // иначе беседа навсегда закрыта для дожима.
+      await updateConversationFields(conversationId, { stage: 'followup' });
     }
 
     // --- стоп-слова: DND навсегда, вежливый ответ без LLM и без поиска.
