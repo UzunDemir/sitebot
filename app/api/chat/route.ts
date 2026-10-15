@@ -39,7 +39,7 @@ import {
 } from '@/lib/visitors';
 import { runStrategist } from '@/lib/visitor-memory';
 import { isStopRequest, STOP_REPLY } from '@/lib/nudge';
-import { describeNow } from '@/lib/clock';
+import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '@/lib/clock';
 import { formatBirthday, isBirthdayToday, makeBirthday, type Birthday } from '@/lib/birthday';
 import { listPurchases, summarizePurchases } from '@/lib/purchases';
 import { estimateCostUsd } from '@/lib/pricing';
@@ -268,12 +268,49 @@ export async function POST(req: Request): Promise<Response> {
       return createUIMessageStreamResponse({ stream: stopStream });
     }
 
+    // --- часы и дата: отвечаем сами, без модели. В грязной истории модель
+    // повторяла устаревшее время из прошлых реплик — код не может.
+    const now = new Date();
+    const nowInfo = describeNow(tz, now);
+    if (isTimeOrDateQuestion(query)) {
+      const reply = buildNowAnswer(nowInfo);
+      const nowStream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: 'start' });
+          writer.write({ type: 'start-step' });
+          writer.write({ type: 'text-start', id: 'now-reply' });
+          writer.write({ type: 'text-delta', id: 'now-reply', delta: reply });
+          writer.write({ type: 'text-end', id: 'now-reply' });
+          if (conversationId) {
+            try {
+              const messageId = await saveAssistantMessage(conversationId, {
+                content: reply,
+                citations: [],
+                model: bot.model_id,
+                inputTokens: 0,
+                outputTokens: 0,
+                costUsd: 0,
+                latencyMs: Date.now() - startedAt,
+              });
+              writer.write({
+                type: 'data-feedback',
+                id: 'feedback',
+                data: { messageId, conversationId },
+              });
+            } catch (err) {
+              console.warn('[chat] failed to persist now reply:', err);
+            }
+          }
+          writer.write({ type: 'finish-step' });
+          writer.write({ type: 'finish' });
+        },
+      });
+      return createUIMessageStreamResponse({ stream: nowStream });
+    }
+
     // --- retrieval + grounded prompt (memory block + time awareness)
     const sources = await hybridSearch(bot.id, query, bot.top_k ?? 6);
 
-    // Текущее время в таймзоне посетителя; день рождения и покупки (0004).
-    const now = new Date();
-    const nowInfo = describeNow(tz, now);
     let birthday: Birthday | null = null;
     let birthdayToday = false;
     let purchasesSummary: string | null = null;

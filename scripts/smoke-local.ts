@@ -36,7 +36,7 @@ import {
   parseBirthday,
   serializeBirthday,
 } from '../lib/birthday';
-import { describeNow } from '../lib/clock';
+import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '../lib/clock';
 import { summarizePurchases } from '../lib/purchases';
 import {
   BOT_SETTINGS_DEFAULTS,
@@ -597,6 +597,58 @@ function main(): void {
       console.log('  ✓ промпт: блок времени, запрет отказов и запрет эха времени');
     } else {
       console.error('❌ промпт: блок времени/запреты потеряны');
+      failures += 1;
+    }
+
+    // часы/дата: детерминированный перехват — грязная история его не сломает
+    const timeQuestions = [
+      'который час',
+      'Который час?',
+      'а который сейчас час?',
+      'сколько времени?',
+      'Сколько сейчас времени',
+      'время',
+      'подскажите, который час',
+      'сколько времени сейчас на самом деле',
+      'а время?',
+    ];
+    const dateQuestions = [
+      'какой сегодня день?',
+      'какое сегодня число',
+      'какая сегодня дата?',
+      'какой день недели?',
+      'какой сегодня день и время?',
+    ];
+    const notMeta = [
+      'сколько времени идёт доставка?',
+      'сколько времени займёт доставка',
+      'в какое время вы работаете?',
+      'какой день лучше для доставки?',
+      'во сколько вы закрываетесь?',
+      'расскажите про доставку',
+    ];
+    if (
+      timeQuestions.every((q) => isTimeOrDateQuestion(q)) &&
+      dateQuestions.every((q) => isTimeOrDateQuestion(q)) &&
+      notMeta.every((q) => !isTimeOrDateQuestion(q))
+    ) {
+      console.log('  ✓ часы/дата: вопросы про время пойманы, обычные — нет');
+    } else {
+      const missed = [...timeQuestions, ...dateQuestions].filter((q) => !isTimeOrDateQuestion(q));
+      const wrong = notMeta.filter((q) => isTimeOrDateQuestion(q));
+      console.error(`❌ часы/дата: не пойманы=${JSON.stringify(missed)}, лишние=${JSON.stringify(wrong)}`);
+      failures += 1;
+    }
+
+    const nowAnswer = buildNowAnswer(describeNow('Europe/Moscow', new Date('2026-10-15T05:35:00Z')));
+    if (
+      nowAnswer.includes('08:35') &&
+      nowAnswer.includes('15 октября 2026') &&
+      nowAnswer.includes('Europe/Moscow')
+    ) {
+      console.log(`  ✓ ответ о времени детерминирован: «${nowAnswer}»`);
+    } else {
+      console.error(`❌ ответ о времени: ${nowAnswer}`);
       failures += 1;
     }
   }
