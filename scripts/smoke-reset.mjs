@@ -177,8 +177,9 @@ try {
   );
   check('ход 1: ответ получен', intro.ok, `HTTP ${intro.status}`);
 
+  // Карточка появляется сразу; имя/факты — фоном (LLM, ~1–5 с): ждём до 20 с.
   let card = null;
-  for (let attempt = 0; attempt < 15 && !card; attempt += 1) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     await sleep(1000);
     const res = await supabase
       .from('visitors')
@@ -187,6 +188,7 @@ try {
       .eq('visitor_key', visitorKey)
       .maybeSingle();
     if (res.data) card = res.data;
+    if (card?.name === NAME) break;
   }
   cardId = card?.id ?? null;
   check('карточка создана', Boolean(cardId));
