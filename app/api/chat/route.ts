@@ -21,7 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 import { resolveModel } from '@/lib/models';
 import { hybridSearch } from '@/lib/retrieval';
-import { buildSystemPrompt } from '@/lib/prompts';
+import { buildSystemPrompt, sanitizeEchoedRefusal } from '@/lib/prompts';
 import {
   ensureConversation,
   loadConversationById,
@@ -354,7 +354,8 @@ export async function POST(req: Request): Promise<Response> {
       const { messages: stored } = await loadRecentMessages(conversationId, limit);
       modelMessages = stored.map((message) => ({
         role: message.role,
-        content: message.content,
+        content:
+          message.role === 'assistant' ? sanitizeEchoedRefusal(message.content) : message.content,
       }));
       const tail = stored[stored.length - 1];
       if (!tail || tail.role !== 'user' || tail.content !== query) {

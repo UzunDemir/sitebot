@@ -52,7 +52,7 @@ import {
   quietHoursEnd,
   sanitizeNudgeText,
 } from '../lib/nudge';
-import { buildSystemPrompt, personalityRules } from '../lib/prompts';
+import { buildSystemPrompt, personalityRules, sanitizeEchoedRefusal } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
 void getSupabase; // import-graph check only; not called (needs env)
@@ -592,11 +592,28 @@ function main(): void {
       promptText.includes('Текущие дата и время: среда, 14 октября 2026') &&
       promptText.includes('нет доступа к календарю') &&
       promptText.includes('не повторяй время из прежних ответов') &&
-      promptText.includes('- Сейчас среда, 14 октября 2026')
+      promptText.includes('- Сейчас среда, 14 октября 2026') &&
+      promptText.includes('не хранишь историю переписки') &&
+      promptText.includes('кратким пересказом этого диалога')
     ) {
-      console.log('  ✓ промпт: блок времени, запрет отказов и запрет эха времени');
+      console.log('  ✓ промпт: блок времени, запреты отказов и блок памяти диалога');
     } else {
-      console.error('❌ промпт: блок времени/запреты потеряны');
+      console.error('❌ промпт: блок времени/памяти или запреты потеряны');
+      failures += 1;
+    }
+
+    // гигиена контекста: устаревшие отказы не попадают в модель
+    const refusal = 'Историю переписки я не храню и воспроизвести её не могу — доступа к ней у меня нет.';
+    const timeRefusal = 'Время я не подсказываю — доступа к часам у меня нет.';
+    const normalAnswer = 'Доставка курьером по Москве занимает 1–2 дня, стоимость от 300 ₽.';
+    if (
+      sanitizeEchoedRefusal(refusal) === '(устаревший ответ пропущен)' &&
+      sanitizeEchoedRefusal(timeRefusal) === '(устаревший ответ пропущен)' &&
+      sanitizeEchoedRefusal(normalAnswer) === normalAnswer
+    ) {
+      console.log('  ✓ контекст чист: устаревшие отказы заменяются, обычные ответы не тронуты');
+    } else {
+      console.error('❌ санитайз отказов не работает');
       failures += 1;
     }
 
