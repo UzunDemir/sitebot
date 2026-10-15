@@ -9,6 +9,7 @@ import {
   type BotGoal,
   type BotSettings,
 } from '@/lib/bot-settings';
+import { KNOWLEDGE_PACKS } from '@/lib/knowledge-packs';
 import VisitorsPanel from './visitors-panel';
 
 const CHANNEL_CARDS: Array<{ name: string; status: string; note: string }> = [
@@ -738,6 +739,62 @@ function BotSettings({
             метрика цитирования в статистике перестанет расти.
           </p>
         )}
+
+        <div className="space-y-3 border-t border-slate-200 pt-3">
+          <p className="text-xs font-semibold text-slate-600">Знания и персона</p>
+          <label className="space-y-1 text-xs text-slate-500">
+            Эмпатия: {settings.empathy ?? BOT_SETTINGS_DEFAULTS.empathy}/100
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.empathy ?? BOT_SETTINGS_DEFAULTS.empathy}
+              onChange={(e) => setSetting('empathy', Number(e.target.value))}
+              className="w-full"
+            />
+            <span className="text-[10px] text-slate-400">
+              0 — деловой тон · 100 — сначала признать чувства и ситуацию клиента
+            </span>
+          </label>
+          <div>
+            <p className="text-xs text-slate-500">
+              Профессиональные наборы — приёмы и стиль (факты бот берёт только из базы знаний и диалога)
+            </p>
+            <div className="mt-1 grid gap-1.5 sm:grid-cols-2">
+              {KNOWLEDGE_PACKS.map((pack) => (
+                <label key={pack.id} className="flex items-start gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={(settings.packs ?? []).includes(pack.id)}
+                    onChange={(e) => {
+                      const current = new Set(settings.packs ?? []);
+                      if (e.target.checked) current.add(pack.id);
+                      else current.delete(pack.id);
+                      setSetting('packs', Array.from(current));
+                    }}
+                    className="mt-0.5 h-4 w-4"
+                  />
+                  <span>
+                    {pack.title}
+                    <span className="block text-[10px] text-slate-400">{pack.about}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="block space-y-1 text-xs text-slate-500">
+            Свои знания и указания (до 2000 символов)
+            <textarea
+              rows={4}
+              value={settings.customKnowledge ?? ''}
+              maxLength={2000}
+              onChange={(e) => setSetting('customKnowledge', e.target.value)}
+              placeholder="Например: магазин работает с 2010 года; любимый приём — сравнение двух вариантов; всегда говорить «вы»…"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
+        </div>
 
         <div className="space-y-3 border-t border-slate-200 pt-3">
           <p className="text-xs font-semibold text-slate-600">Дожим молчащих посетителей</p>

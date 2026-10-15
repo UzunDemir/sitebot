@@ -7,6 +7,8 @@
  * code runs on defaults (isMissingColumnError detects the old schema).
  */
 
+import { KNOWLEDGE_PACK_IDS } from './knowledge-packs';
+
 export type BotChattiness = 'strict' | 'friendly' | 'proactive' | 'initiator';
 
 /** 10 goal presets (+ none / custom). «Достигнуто» judges the strategist. */
@@ -72,6 +74,12 @@ export type BotSettings = {
   cunning?: number;
   /** Остроумие 0..100: неожиданные, меткие формулировки. */
   wit?: number;
+  /** Эмпатия 0..100: 0 — деловой тон, 100 — сначала признать чувства клиента. */
+  empathy?: number;
+  /** Наборы знаний (Ф7): id из lib/knowledge-packs.ts (до 8). */
+  packs?: string[];
+  /** Свои знания/указания владельца (до 2000 символов). */
+  customKnowledge?: string;
   /** Proactive touches: nudge engine + quiet hours (Ф3). */
   proactive?: BotProactiveSettings;
 };
@@ -89,6 +97,9 @@ export const BOT_SETTINGS_DEFAULTS = {
   humor: 30,
   cunning: 40,
   wit: 30,
+  empathy: 50,
+  packs: [] as string[],
+  customKnowledge: '',
   proactive: {
     enabled: true,
     nudges: { attempts: 2, firstDelaySec: 45, intervalSec: 300 },
@@ -145,6 +156,25 @@ export function parseBotSettings(input: unknown): BotSettings {
   out.humor = intInRange(raw.humor, 0, 100);
   out.cunning = intInRange(raw.cunning, 0, 100);
   out.wit = intInRange(raw.wit, 0, 100);
+  out.empathy = intInRange(raw.empathy, 0, 100);
+
+  // Наборы знаний (Ф7): только известные id, без дублей, до 8 штук.
+  if (Array.isArray(raw.packs)) {
+    const seen = new Set<string>();
+    const packs: string[] = [];
+    for (const id of raw.packs) {
+      if (typeof id !== 'string') continue;
+      const clean = id.trim();
+      if (!KNOWLEDGE_PACK_IDS.has(clean) || seen.has(clean)) continue;
+      seen.add(clean);
+      packs.push(clean);
+      if (packs.length >= 8) break;
+    }
+    out.packs = packs;
+  }
+  if (typeof raw.customKnowledge === 'string' && raw.customKnowledge.trim()) {
+    out.customKnowledge = raw.customKnowledge.trim().slice(0, 2000);
+  }
 
   if (raw.proactive && typeof raw.proactive === 'object' && !Array.isArray(raw.proactive)) {
     const p = raw.proactive as Record<string, unknown>;

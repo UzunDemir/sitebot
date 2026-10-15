@@ -208,6 +208,32 @@ try {
     JSON.stringify(card?.preferences ?? []),
   );
 
+  // Структурированные факты (sql/0006): пайплайн пишет их вместе с карточкой.
+  let factRows = null;
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    const factsRes = await supabase
+      .from('visitor_facts')
+      .select('id, kind, value')
+      .eq('visitor_id', cardId);
+    if (factsRes.error) {
+      if (isMissingRelation(factsRes.error)) {
+        throw new Error('нет таблицы visitor_facts — примените sql/0006_visitor_facts.sql');
+      }
+      throw factsRes.error;
+    }
+    factRows = factsRes.data ?? [];
+    if (factRows.length > 0) break;
+    await sleep(1000);
+  }
+  check('структурированные факты записаны (sql/0006)', (factRows ?? []).length >= 1, `rows=${(factRows ?? []).length}`);
+  check(
+    'факт «имя» есть среди структурированных',
+    (factRows ?? []).some(
+      (fact) => fact.kind === 'name' && String(fact.value).toLowerCase().includes(NAME.toLowerCase()),
+    ),
+    JSON.stringify((factRows ?? []).map((fact) => `${fact.kind}:${fact.value}`).slice(0, 5)),
+  );
+
   // --- 2) the conversation is linked to the visitor
   const convRes = await supabase
     .from('conversations')

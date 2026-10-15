@@ -8,7 +8,7 @@
 
 ## 0. Что уже есть в продукте (не переделываем, используем)
 
-- **`bots.settings`** (jsonb, `sql/0002_settings.sql`, `lib/bot-settings.ts`): `maxOutputTokens`, `showSources`, `historyDepth`, `chattiness` (strict|friendly|proactive|initiator), `goal` (none|call|purchase|phone|birthday|custom), `goalText`, `salesPressure` (0|1|2).
+- **`bots.settings`** (jsonb, `sql/0002_settings.sql`, `lib/bot-settings.ts`): `maxOutputTokens`, `showSources`, `historyDepth`, `chattiness` (strict|friendly|proactive|initiator), `goal` (none|call|purchase|phone|birthday|custom), `goalText`, `salesPressure` (0|1|2), шкалы характера (`humor`, `cunning`, `wit`, `empathy`), `packs` (наборы знаний, Ф7), `customKnowledge`.
 - **Промпт-слой** (`lib/prompts.ts`): правила стиля, цели, давления (с гардрейлами), источники.
 - **`/api/chat`**: квота 300 req/сутки, гибридный поиск (RRF), стрим, персистенция (`conversations`, `messages`), `data-sources`, `data-feedback`.
 - **Виджет** (`app/chat-core.tsx`): `useChat`, приветствие, цитаты, 👍/👎, `sessionKey` в `localStorage`.
@@ -94,7 +94,7 @@
   `sql/0005_memory_reset.sql`; активная память обнуляется, архив остаётся). Текстовые просьбы «забудь всё»
   перехватываются сервером без LLM.
 - Админка: `GET /api/admin/visitors`, `GET/POST /api/admin/visitors/[id]` (заметки, детали включают
-  `memoryResets` — эпохи «забывания»), `POST /api/admin/visitors/[id]/memory` (`{resetId, revoked}` —
+  `memoryResets` — эпохи «забывания», `facts` — структурированные факты (sql/0006)), `POST /api/admin/visitors/[id]/memory` (`{resetId, revoked}` —
   вернуть в активную / скрыть обратно), расширение `GET /api/admin/stats` (конверсия, касания, отказы).
 - Существующие контракты не ломаем; к `sessionKey` добавляется `visitorKey`.
 
@@ -199,3 +199,11 @@
   `memory_hidden`). API: `GET /api/admin/visitors/[id]` отдаёт `memoryResets`;
   `POST /api/admin/visitors/[id]/memory` `{resetId, revoked}`. `smoke:reset` расширен проверками
   возврата/скрытия.
+
+- **15.10.2026 — Ф6+ факты и Ф7 знания.** `sql/0006_visitor_facts.sql`: структурированные факты
+  (kind+value, `times_seen`, first/last_seen) — пайплайн стратега пишет их вместе с карточкой; в
+  карточке админки секция «Факты». Ф7: каталог `lib/knowledge-packs.ts` (8 наборов: продажи,
+  возражения, психология, переговоры, сервис, юмор, актёрское мастерство, эксперт), выбор в
+  настройках (`settings.packs`), «свои знания» (`customKnowledge` ≤2000) и ползунок «Эмпатия»;
+  промпт собирает блоки с бюджетом 3500 символов. Смоуки расширены (smoke-local — настройки/наборы,
+  smoke:visitor — факты).

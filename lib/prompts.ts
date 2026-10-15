@@ -5,6 +5,7 @@
  */
 
 import type { RetrievedChunk } from './retrieval';
+import { KNOWLEDGE_BUDGET, selectedKnowledgePacks } from './knowledge-packs';
 import {
   BOT_SETTINGS_DEFAULTS,
   effectiveAggressiveness,
@@ -142,6 +143,15 @@ export function personalityRules(settings: BotSettings): string[] {
     );
   }
 
+  const empathy = settings.empathy ?? BOT_SETTINGS_DEFAULTS.empathy;
+  if (empathy >= 70) {
+    rules.push(
+      'Эмпатия (70–100): сначала признай чувства и ситуацию клиента («понимаю», «представляю»), затем предлагай решение.',
+    );
+  } else if (empathy <= 30) {
+    rules.push('Эмпатия (0–30): деловой тон без эмоциональных формулировок.');
+  }
+
   return rules;
 }
 
@@ -228,6 +238,25 @@ export function buildSystemPrompt(
   const tone = toneRule(settings.tone ?? 50);
   if (tone) blocks.push(tone);
   blocks.push(...personalityRules(settings));
+
+  // Ф7: наборы знаний (техника и стиль; факты — по-прежнему из базы/диалога).
+  const packs = selectedKnowledgePacks(settings.packs);
+  if (packs.length > 0) {
+    let budget = KNOWLEDGE_BUDGET;
+    for (const pack of packs) {
+      if (pack.prompt.length > budget) break;
+      budget -= pack.prompt.length;
+      blocks.push(
+        `Профессиональный набор «${pack.title}» (приёмы и стиль; факты — только из базы знаний и диалога):\n${pack.prompt}`,
+      );
+    }
+  }
+  const customKnowledge = settings.customKnowledge?.trim();
+  if (customKnowledge) {
+    blocks.push(
+      `Дополнительные знания владельца (стиль и контекст; не выдумывай факты):\n${customKnowledge.slice(0, 2000)}`,
+    );
+  }
   if (nowText) {
     blocks.push(
       [

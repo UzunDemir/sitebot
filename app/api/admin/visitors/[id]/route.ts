@@ -23,6 +23,7 @@ import {
 import { formatBirthday, makeBirthday, parseBirthday, serializeBirthday } from '@/lib/birthday';
 import { listPurchases, purchasesAvailable } from '@/lib/purchases';
 import { listMemoryResets } from '@/lib/memory-window';
+import { listVisitorFacts } from '@/lib/visitor-facts';
 
 function clientShape(visitor: VisitorRow) {
   const birthday = makeBirthday(visitor.birthday_day, visitor.birthday_month, visitor.birthday_year);
@@ -132,6 +133,9 @@ export async function GET(
     // Memory epochs (sql/0005): «забыть меня» — лента сбросов и возврат.
     const memoryResets = await listMemoryResets(visitor.id);
 
+    // Структурированные факты (sql/0006): kind+value, счётчик, даты.
+    const facts = await listVisitorFacts(visitor.id);
+
     return Response.json({
       available: true,
       visitor: clientShape(visitor),
@@ -164,6 +168,15 @@ export async function GET(
         createdAt: reset.createdAt,
         revokedAt: reset.revokedAt,
         snapshot: reset.snapshot,
+      })),
+      facts: facts.map((fact) => ({
+        id: fact.id,
+        kind: fact.kind,
+        value: fact.value,
+        source: fact.source,
+        timesSeen: fact.timesSeen,
+        firstSeen: fact.firstSeen,
+        lastSeen: fact.lastSeen,
       })),
     });
   } catch (err) {

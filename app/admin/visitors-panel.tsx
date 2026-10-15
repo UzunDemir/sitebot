@@ -84,6 +84,26 @@ type VisitorEvent = {
   payload: Record<string, unknown>;
 };
 
+type VisitorFact = {
+  id: string;
+  kind: string;
+  value: string;
+  source: string;
+  timesSeen: number;
+  firstSeen: string;
+  lastSeen: string;
+};
+
+const FACT_KIND_LABELS: Record<string, string> = {
+  name: 'имя',
+  contact: 'контакт',
+  interest: 'интерес',
+  preference: 'предпочтение',
+  complaint: 'претензия',
+  birthday: 'день рождения',
+  fact: 'факт',
+};
+
 const CONTACT_LABELS: Array<{ key: string; label: string }> = [
   { key: 'phone', label: 'Телефон' },
   { key: 'email', label: 'Email' },
@@ -182,6 +202,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
     conversations: VisitorConversation[];
     events: VisitorEvent[];
     memoryResets: VisitorMemoryReset[];
+    facts: VisitorFact[];
   } | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
 
@@ -226,6 +247,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
         conversations: Array.isArray(res.data.conversations) ? res.data.conversations : [],
         events: Array.isArray(res.data.events) ? res.data.events : [],
         memoryResets: Array.isArray(res.data.memoryResets) ? res.data.memoryResets : [],
+        facts: Array.isArray(res.data.facts) ? res.data.facts : [],
       });
     } else {
       setDetail(null);
@@ -558,6 +580,32 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                         ))}
                       </ul>
                     </details>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Факты ({(detail.facts ?? []).length})
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Структурированная память: каждый факт — отдельной строкой, повторы учитываются
+                    счётчиком. Требует sql/0006_visitor_facts.sql; память не удаляется.
+                  </p>
+                  {(detail.facts ?? []).length === 0 ? (
+                    <p className="mt-2 text-[11px] text-slate-400">Фактов пока нет.</p>
+                  ) : (
+                    <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                      {(detail.facts ?? []).map((fact) => (
+                        <li key={fact.id} className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
+                            {FACT_KIND_LABELS[fact.kind] ?? fact.kind}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-slate-700">{fact.value}</span>
+                          {fact.timesSeen > 1 && <span className="text-slate-400">×{fact.timesSeen}</span>}
+                          <span className="text-slate-400">{formatDate(fact.lastSeen)}</span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
 

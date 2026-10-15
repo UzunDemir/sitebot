@@ -24,6 +24,7 @@ import {
 } from './visitors';
 import type { BotGoal } from './bot-settings';
 import { formatBirthday, makeBirthday, parseBirthday, type Birthday } from './birthday';
+import { recordVisitorFacts } from './visitor-facts';
 
 export type VisitorFacts = {
   name?: string;
@@ -462,6 +463,8 @@ export async function runStrategist(
       }
     }
     await updateVisitorProfile(visitorId, patch);
+    // Ф6+: структурированные факты — отдельной строкой каждый (sql/0006).
+    await recordVisitorFacts({ botId: visitor.bot_id, visitorId, facts: result.facts });
   }
 
   if (!conversation) return;

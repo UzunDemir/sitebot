@@ -443,9 +443,13 @@ function main(): void {
       effectiveAggressiveness({ aggressiveness: 15, salesPressure: 2 }) === 15 &&
       parseBotSettings({ aggressiveness: 250 }).aggressiveness === 100 &&
       parseBotSettings({ goal: 'несуществующая' }).goal === undefined &&
+      parseBotSettings({ empathy: 250 }).empathy === 100 &&
+      parseBotSettings({ packs: ['sales-core', 'zzz', 'sales-core', 42] }).packs?.join(',') === 'sales-core' &&
+      parseBotSettings({ packs: 'нет' }).packs === undefined &&
+      parseBotSettings({ customKnowledge: '  правило  ' }).customKnowledge === 'правило' &&
       effectiveProactive({}).attempts === BOT_SETTINGS_DEFAULTS.proactive.nudges.attempts
     ) {
-      console.log('  ✓ настройки: агрессивность (в т.ч. legacy), цели, дожим разобраны');
+      console.log('  ✓ настройки: агрессивность (в т.ч. legacy), цели, дожим, эмпатия и наборы разобраны');
     } else {
       console.error(
         `❌ настройки: ${JSON.stringify({ parsed, proactive, legacyAgg: effectiveAggressiveness(legacy) })}`,
@@ -646,6 +650,31 @@ function main(): void {
       console.log('  ✓ промпт: блок времени, запреты отказов и блок памяти диалога');
     } else {
       console.error('❌ промпт: блок времени/памяти или запреты потеряны');
+      failures += 1;
+    }
+
+    // промпт: наборы знаний и свои знания владельца (Ф7)
+    const packPrompt = buildSystemPrompt(
+      'Ты ассистент интернет-магазина.',
+      [],
+      {
+        packs: ['sales-core', 'psychology'],
+        customKnowledge: 'Всегда предлагай сравнить два варианта.',
+      },
+      undefined,
+      undefined,
+    );
+    const plainPrompt = buildSystemPrompt('Ты ассистент интернет-магазина.', [], {}, undefined, undefined);
+    if (
+      packPrompt.includes('Профессиональный набор «Продажи: ведение к цели»') &&
+      packPrompt.includes('Профессиональный набор «Психология клиента»') &&
+      packPrompt.includes('Дополнительные знания владельца') &&
+      packPrompt.includes('сравнить два варианта') &&
+      !plainPrompt.includes('Профессиональный набор')
+    ) {
+      console.log('  ✓ промпт: наборы знаний и свои знания подключаются (Ф7)');
+    } else {
+      console.error('❌ промпт: наборы знаний не подключились (Ф7)');
       failures += 1;
     }
 
