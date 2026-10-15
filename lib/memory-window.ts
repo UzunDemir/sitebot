@@ -14,6 +14,7 @@
 
 import { getSupabase } from './supabase';
 import {
+  getVisitorById,
   isMissingRelationError,
   loadVisitorByKey,
   recordEvent,
@@ -284,3 +285,130 @@ export async function softResetVisitor(input: {
     return { ok: false, visitorId: null };
   }
 }
+
+/** Одна эпоха с идентификаторами (админка: проверка принадлежности). */
+export type MemoryResetFull = MemoryResetRow & { visitorId: string; botId: string };
+
+export async function getMemoryResetById(resetId: string): Promise<MemoryResetFull | null> {
+  try {
+    const supabase = getSupabase();
+    const res = await supabase
+      .from('memory_resets')
+      .select('id, bot_id, visitor_id, source, reason, note, snapshot, created_at, revoked_at')
+      .eq('id', resetId)
+      .maybeSingle();
+    if (res.error) {
+      if (!isMissingRelationError(res.error)) {
+        console.warn('[memory] reset load failed:', res.error.message);
+      }
+      return null;
+    }
+    const row = res.data as Record<string, unknown> | null;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      visitorId: String(row.visitor_id),
+      botId: String(row.bot_id),
+      source: String(row.source ?? ''),
+      reason: typeof row.reason === 'string' ? row.reason : '',
+      note: typeof row.note === 'string' ? row.note : '',
+      snapshot:
+        row.snapshot && typeof row.snapshot === 'object' && !Array.isArray(row.snapshot)
+          ? (row.snapshot as Record<string, unknown>)
+          : {},
+      createdAt: typeof row.created_at === 'string' ? row.created_at : '',
+      revokedAt: typeof row.revoked_at === 'string' ? row.revoked_at : null,
+    };
+  } catch (err) {
+    console.warn('[memory] reset load error:', err);
+    return null;
+  }
+}
+
+/** «Вернуть в активную» / «скрыть обратно»: маркер перестаёт/снова режет окно. */
+export async function setMemoryResetRevoked(resetId: string, revoked: boolean): Promise<boolean> {
+  try {
+    const supabase = getSupabase();
+    const res = await supabase
+      .from('memory_resets')
+      .update({ revoked_at: revoked ? new Date().toISOString() : null })
+      .eq('id', resetId);
+    if (res.error) {
+      if (!isMissingRelationError(res.error)) {
+        console.warn('[memory] revoke failed:', res.error.message);
+      }
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[memory] revoke error:', err);
+    return false;
+  }
+}
+
+/**
+ * Вернуть снимок эпохи в карточку (Ф6): только в ПУСТЫЕ поля — правки
+ * владельца и более новые факты не перезаписываются. Хронология не меняется.
+ */
+export async function restoreMemorySnapshot(
+  visitorId: string,
+  snapshot: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const visitor = await getVisitorById(visitorId);
+    if (!visitor) return false;
+
+    const patch: VisitorProfilePatch = {};
+    const str = (value: unknown): string | null =>
+      typeof value === 'string' && value.trim() ? value.trim() : null;
+
+    const snapshotName = str(snapshot.name);
+    if (!visitor.name && snapshotName) patch.name = snapshotName;
+
+    if (
+      Object.keys(visitor.contacts).length === 0 &&
+      snapshot.contacts &&
+      typeof snapshot.contacts === 'object' &&
+      !Array.isArray(snapshot.contacts)
+    ) {
+      patch.contacts = snapshot.contacts as Record<string, string>;
+    }
+    const snapshotDigest = str(snapshot.digest);
+    if (!visitor.memory_digest && snapshotDigest) patch.memory_digest = snapshotDigest;
+
+    const interests = Array.isArray(snapshot.interests)
+      ? snapshot.interests.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
+    const currentInterests = Array.isArray(visitor.meta.interests) ? visitor.meta.interests : [];
+    if (currentInterests.length === 0 && interests.length > 0) {
+      patch.meta = { ...visitor.meta, interests };
+    }
+
+    if (visitor.schema_v4) {
+      const birthday =
+        snapshot.birthday && typeof snapshot.birthday === 'object' && !Array.isArray(snapshot.birthday)
+          ? (snapshot.birthday as { day?: unknown; month?: unknown; year?: unknown })
+          : null;
+      if (birthday) {
+        if (!visitor.birthday_day && typeof birthday.day === 'number') patch.birthday_day = birthday.day;
+        if (!visitor.birthday_month && typeof birthday.month === 'number') patch.birthday_month = birthday.month;
+        if (!visitor.birthday_year && typeof birthday.year === 'number') patch.birthday_year = birthday.year;
+      }
+      const preferences = Array.isArray(snapshot.preferences)
+        ? snapshot.preferences.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      if (visitor.preferences.length === 0 && preferences.length > 0) patch.preferences = preferences;
+      const complaints = Array.isArray(snapshot.complaints)
+        ? snapshot.complaints.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      if (visitor.complaints.length === 0 && complaints.length > 0) patch.complaints = complaints;
+    }
+
+    if (Object.keys(patch).length === 0) return true; // восстанавливать нечего — это норма
+    return updateVisitorProfile(visitorId, patch);
+  } catch (err) {
+    console.warn('[memory] snapshot restore error:', err);
+    return false;
+  }
+}
+

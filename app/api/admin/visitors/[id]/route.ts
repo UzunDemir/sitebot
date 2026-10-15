@@ -22,6 +22,7 @@ import {
 } from '@/lib/visitors';
 import { formatBirthday, makeBirthday, parseBirthday, serializeBirthday } from '@/lib/birthday';
 import { listPurchases, purchasesAvailable } from '@/lib/purchases';
+import { listMemoryResets } from '@/lib/memory-window';
 
 function clientShape(visitor: VisitorRow) {
   const birthday = makeBirthday(visitor.birthday_day, visitor.birthday_month, visitor.birthday_year);
@@ -128,6 +129,9 @@ export async function GET(
     const purchases = await listPurchases(visitor.id, 20);
     const purchasesReady = purchases.length > 0 || (await purchasesAvailable());
 
+    // Memory epochs (sql/0005): «забыть меня» — лента сбросов и возврат.
+    const memoryResets = await listMemoryResets(visitor.id);
+
     return Response.json({
       available: true,
       visitor: clientShape(visitor),
@@ -153,6 +157,13 @@ export async function GET(
         type: typeof e.type === 'string' ? e.type : 'unknown',
         createdAt: e.created_at ?? null,
         payload: e.payload ?? {},
+      })),
+      memoryResets: memoryResets.map((reset) => ({
+        id: reset.id,
+        source: reset.source,
+        createdAt: reset.createdAt,
+        revokedAt: reset.revokedAt,
+        snapshot: reset.snapshot,
       })),
     });
   } catch (err) {

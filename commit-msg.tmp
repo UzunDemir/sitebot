@@ -1,0 +1,10 @@
+Ф6: админка эпох — лента сбросов и «вернуть в активную»/«скрыть обратно»
+
+- GET /api/admin/visitors/[id] отдаёт memoryResets (эпохи «забывания»)
+- POST /api/admin/visitors/[id]/memory {resetId, revoked}: снять/вернуть маркер;
+  при возврате снимок эпохи восстанавливается в ПУСТЫЕ поля карточки
+  (правки владельца не перезаписываются); события memory_restored/memory_hidden
+- lib/memory-window.ts: getMemoryResetById, setMemoryResetRevoked, restoreMemorySnapshot
+- панель «Посетители»: секция «Память: эпохи» с лентой, статусом и кнопками
+- smoke:reset: +8 проверок админки (возврат, снимок, окно, скрытие обратно)
+- доки: ТЗ (Ф6), RUNBOOK, description

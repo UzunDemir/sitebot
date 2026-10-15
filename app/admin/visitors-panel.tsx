@@ -4,9 +4,10 @@
  * Admin panel: «Посетители» — visitor cards for one bot.
  *
  * Left: list (name, last seen, contacts hint). Right: the card — editable
- * name/contacts/tags/notes, auto memory digest, conversations and the event
- * feed. Data comes from /api/admin/visitors (+ /[id]); when sql/0003_seller.sql
- * is not applied yet the panel shows a migration hint.
+ * name/contacts/tags/notes, auto memory digest, conversations, the event feed
+ * and memory epochs («забыть меня»: return-to-active / hide-back, sql/0005).
+ * Data comes from /api/admin/visitors (+ /[id], /[id]/memory); when
+ * sql/0003_seller.sql is not applied yet the panel shows a migration hint.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -69,6 +70,14 @@ type VisitorConversation = {
   messageCount: number;
 };
 
+type VisitorMemoryReset = {
+  id: string;
+  source: string;
+  createdAt: string | null;
+  revokedAt: string | null;
+  snapshot: Record<string, unknown>;
+};
+
 type VisitorEvent = {
   type: string;
   createdAt: string | null;
@@ -112,6 +121,9 @@ const EVENT_LABELS: Record<string, string> = {
   session_closed: 'сессия закрыта',
   nudge_sent: 'написал сам (дожим)',
   nudge_answered: 'ответил на дожим',
+  memory_reset: 'память сброшена («забыть меня»)',
+  memory_restored: 'память возвращена в активную',
+  memory_hidden: 'память снова скрыта',
 };
 
 function splitLines(value: string): string[] {
@@ -141,6 +153,21 @@ function contactHint(contacts: Record<string, string>): string | null {
   return first ?? null;
 }
 
+/** Короткая сводка снимка эпохи для ленты «Память». */
+function snapshotHint(snapshot: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof snapshot.name === 'string' && snapshot.name.trim()) parts.push(`имя: ${snapshot.name.trim()}`);
+  const contacts = snapshot.contacts as Record<string, unknown> | undefined;
+  if (contacts && typeof contacts === 'object') {
+    const first = Object.values(contacts).find((value) => typeof value === 'string' && value.trim());
+    if (typeof first === 'string') parts.push(first);
+  }
+  if (typeof snapshot.digest === 'string' && snapshot.digest.trim()) {
+    parts.push(snapshot.digest.trim().slice(0, 70));
+  }
+  return parts.join(' · ') || '—';
+}
+
 export default function VisitorsPanel({ botId }: { botId: string }) {
   const [visitors, setVisitors] = useState<VisitorListItem[]>([]);
   const [available, setAvailable] = useState(true);
@@ -154,6 +181,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
     purchasesAvailable: boolean;
     conversations: VisitorConversation[];
     events: VisitorEvent[];
+    memoryResets: VisitorMemoryReset[];
   } | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
 
@@ -171,6 +199,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
   const [saveMessage, setSaveMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [purchaseForm, setPurchaseForm] = useState({ title: '', amount: '', status: 'completed' });
   const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [memoryBusy, setMemoryBusy] = useState(false);
 
   const loadList = useCallback(async (): Promise<void> => {
     setListBusy(true);
@@ -196,6 +225,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
         purchasesAvailable: res.data.purchasesAvailable !== false,
         conversations: Array.isArray(res.data.conversations) ? res.data.conversations : [],
         events: Array.isArray(res.data.events) ? res.data.events : [],
+        memoryResets: Array.isArray(res.data.memoryResets) ? res.data.memoryResets : [],
       });
     } else {
       setDetail(null);
@@ -302,6 +332,18 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
     setPurchaseBusy(true);
     const res = await api(`/api/admin/purchases/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setPurchaseBusy(false);
+    if (res.ok) void loadDetail(detail.visitor.id);
+  }
+
+  async function toggleMemoryEpoch(resetId: string, revoked: boolean) {
+    if (!detail || memoryBusy) return;
+    setMemoryBusy(true);
+    const res = await api(`/api/admin/visitors/${encodeURIComponent(detail.visitor.id)}/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resetId, revoked }),
+    });
+    setMemoryBusy(false);
     if (res.ok) void loadDetail(detail.visitor.id);
   }
 
@@ -516,6 +558,55 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                         ))}
                       </ul>
                     </details>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Память: эпохи «забывания» ({(detail.memoryResets ?? []).length})
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Память никогда не удаляется: «Забыть меня» открывает новую эпоху, архив
+                    остаётся. «Вернуть в активную» — модель снова видит ту часть переписки, а
+                    снимок возвращается в пустые поля карточки.
+                  </p>
+                  {(detail.memoryResets ?? []).length === 0 ? (
+                    <p className="mt-2 text-[11px] text-slate-400">Сбросов не было.</p>
+                  ) : (
+                    <ul className="mt-2 divide-y divide-slate-100">
+                      {(detail.memoryResets ?? []).map((epoch) => (
+                        <li key={epoch.id} className="flex flex-wrap items-center gap-2 py-2 text-[11px]">
+                          <span className="text-slate-400">{formatDate(epoch.createdAt)}</span>
+                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
+                            {epoch.source === 'chat'
+                              ? 'забудь в чате'
+                              : epoch.source === 'admin'
+                                ? 'из админки'
+                                : 'кнопка «Забыть меня»'}
+                          </span>
+                          {epoch.revokedAt ? (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                              в активной памяти
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-400">
+                              скрыта
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-slate-500">
+                            {snapshotHint(epoch.snapshot)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void toggleMemoryEpoch(epoch.id, !epoch.revokedAt)}
+                            disabled={memoryBusy}
+                            className="ml-auto text-slate-400 hover:text-indigo-600 disabled:opacity-50"
+                          >
+                            {epoch.revokedAt ? 'скрыть обратно' : 'вернуть в активную'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
 

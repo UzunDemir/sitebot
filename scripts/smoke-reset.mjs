@@ -11,6 +11,7 @@
  *   4. GET /api/chat/history -> пустая лента новой эпохи, имя скрыто
  *   5. текст «забудь всё» -> канонический ответ, вторая эпоха (source=chat)
  *   6. возврат: новое сообщение оживляет беседу (in_progress)
+ *   7. админка (Ф6): эпохи в карточке, «вернуть в активную» / «скрыть обратно»
  *
  * Local mode (default): spawns `npm run start` (run `npm run build` first).
  * Remote mode: set SMOKE_BASE_URL.
@@ -43,6 +44,7 @@ try {
   process.exit(1);
 }
 const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY);
+const ADMIN_SECRET = env.ADMIN_SECRET ?? '';
 
 function isMissingRelation(err) {
   if (!err || typeof err !== 'object') return false;
@@ -320,6 +322,85 @@ try {
     .eq('session_key', session2)
     .maybeSingle();
   check('возврат: беседа ожила (in_progress)', conv2.data?.outcome === 'in_progress', `outcome=${conv2.data?.outcome}`);
+
+  // --- 7) админка: эпохи памяти (Ф6) — «вернуть в активную» / «скрыть обратно»
+  console.log('── admin: эпохи (Ф6) ──');
+  if (!ADMIN_SECRET) throw new Error('нет ADMIN_SECRET в .env.local');
+  const loginRes = await fetch(`${BASE}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: ADMIN_SECRET }),
+  });
+  const cookie = (loginRes.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
+  check('вход в админку', loginRes.ok && cookie.length > 0, `HTTP ${loginRes.status}`);
+
+  const detailRes = await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}`, {
+    headers: { cookie },
+  });
+  const detailJson = await detailRes.json().catch(() => null);
+  const epochs = Array.isArray(detailJson?.memoryResets) ? detailJson.memoryResets : [];
+  check('админка: эпохи в карточке (2)', epochs.length === 2, `rows=${epochs.length}`);
+
+  const buttonEpoch = epochs.find((epoch) => epoch.source === 'button');
+  const chatEpoch = epochs.find((epoch) => epoch.source === 'chat');
+  check(
+    'админка: эпоха кнопки со снимком',
+    buttonEpoch?.snapshot?.name === NAME,
+    JSON.stringify(buttonEpoch?.snapshot ?? null),
+  );
+
+  // «вернуть в активную»: имя из снимка возвращается в пустые поля карточки
+  const revoke1 = await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}/memory`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ resetId: buttonEpoch?.id, revoked: true }),
+  });
+  const revoke1Json = await revoke1.json().catch(() => null);
+  check('вернуть эпоху → ok', revoke1.ok && revoke1Json?.ok === true, `HTTP ${revoke1.status}`);
+  const cardRevived = await supabase.from('visitors').select('name').eq('id', cardId).maybeSingle();
+  check(
+    'снимок вернулся в карточку (имя)',
+    cardRevived.data?.name === NAME,
+    `name=${cardRevived.data?.name ?? 'null'}`,
+  );
+
+  // «вернуть» и вторую эпоху: активное окно снова включает старую переписку
+  const revoke2 = await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}/memory`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ resetId: chatEpoch?.id, revoked: true }),
+  });
+  check('вернуть вторую эпоху → ok', revoke2.ok, `HTTP ${revoke2.status}`);
+  const histOpen = await fetch(
+    `${BASE}/api/chat/history?botKey=${encodeURIComponent(bot.public_key)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}&limit=50`,
+  );
+  const histOpenJson = await histOpen.json().catch(() => null);
+  check(
+    'история снова видит старую эпоху (2)',
+    (histOpenJson?.messages ?? []).length === 2,
+    `сообщений: ${(histOpenJson?.messages ?? []).length}`,
+  );
+
+  // «скрыть обратно» обе эпохи: окно сужается, карточка не чистится повторно
+  for (const epoch of [buttonEpoch, chatEpoch]) {
+    if (!epoch?.id) continue;
+    await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ resetId: epoch.id, revoked: false }),
+    });
+  }
+  const histShut = await fetch(
+    `${BASE}/api/chat/history?botKey=${encodeURIComponent(bot.public_key)}&sessionKey=${encodeURIComponent(sessionKey)}&visitorKey=${encodeURIComponent(visitorKey)}&limit=50`,
+  );
+  const histShutJson = await histShut.json().catch(() => null);
+  check(
+    'скрытие обратно сужает окно (0)',
+    (histShutJson?.messages ?? []).length === 0,
+    `сообщений: ${(histShutJson?.messages ?? []).length}`,
+  );
+  const cardKept = await supabase.from('visitors').select('name').eq('id', cardId).maybeSingle();
+  check('карточка не чистится повторно', cardKept.data?.name === NAME, `name=${cardKept.data?.name ?? 'null'}`);
 } catch (err) {
   console.error('❌ smoke-reset упал с ошибкой:', err instanceof Error ? err.message : err);
   failures += 1;
