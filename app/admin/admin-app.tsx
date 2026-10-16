@@ -886,6 +886,15 @@ function BotSettings({
           <label className="flex items-start gap-2 text-xs text-slate-600">
             <input
               type="checkbox"
+              checked={settings.fastAckTail !== false}
+              onChange={(e) => setSetting('fastAckTail', e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>Добавлять фрагмент вопроса в отклик («По вашему вопросу: «…».»)</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
               checked={settings.slowNotice !== false}
               onChange={(e) => setSetting('slowNotice', e.target.checked)}
               className="mt-0.5 h-4 w-4"
@@ -899,7 +908,7 @@ function BotSettings({
               min={2000}
               max={15000}
               step={500}
-              value={settings.slowNoticeAfterMs ?? 4000}
+              value={settings.slowNoticeAfterMs ?? 6000}
               onChange={(e) => setSetting('slowNoticeAfterMs', Number(e.target.value) || 6000)}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
             />
