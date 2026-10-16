@@ -7,6 +7,10 @@
  *                   снимок эпохи возвращается в ПУСТЫЕ поля карточки.
  *   revoked=false — «скрыть обратно»: маркер снова скрывает эпоху; карточка
  *                   НЕ чистится повторно (правки владельца не теряются).
+ * POST { resetId, fields: string[] }
+ *   Точечный возврат: в карточку возвращаются только выбранные поля снимка
+ *   (имя, contacts, digest, interests, preferences, complaints, birthday);
+ *   статус эпохи не меняется, событие memory_fields_restored.
  *
  * Память никогда не удаляется: обе операции меняют только видимость эпохи.
  */
@@ -29,12 +33,22 @@ export async function POST(
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const body = (await req.json().catch(() => null)) as { resetId?: unknown; revoked?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as
+    | { resetId?: unknown; revoked?: unknown; fields?: unknown }
+    | null;
   const resetId = typeof body?.resetId === 'string' ? body.resetId.trim() : '';
-  if (!resetId || typeof body?.revoked !== 'boolean') {
+  const hasRevoked = typeof body?.revoked === 'boolean';
+  const fields = Array.isArray(body?.fields)
+    ? (body?.fields as unknown[])
+        .filter((field): field is string => typeof field === 'string')
+        .map((field) => field.trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  if (!resetId || (!hasRevoked && fields.length === 0)) {
     return Response.json({ error: 'bad_request' }, { status: 400 });
   }
-  const revoked = body.revoked === true;
+  const revoked = hasRevoked && body?.revoked === true;
 
   try {
     const supabase = getSupabase();
@@ -47,17 +61,23 @@ export async function POST(
       return Response.json({ error: 'reset_not_found' }, { status: 404 });
     }
 
-    const updated = await setMemoryResetRevoked(resetId, revoked);
-    if (!updated) return Response.json({ error: 'update_failed' }, { status: 500 });
+    if (hasRevoked) {
+      const updated = await setMemoryResetRevoked(resetId, revoked);
+      if (!updated) return Response.json({ error: 'update_failed' }, { status: 500 });
+    }
 
     if (revoked) {
-      await restoreMemorySnapshot(id, reset.snapshot);
+      await restoreMemorySnapshot(id, reset.snapshot, fields.length > 0 ? fields : undefined);
+    } else if (!hasRevoked && fields.length > 0) {
+      // Точечный возврат: только выбранные поля снимка; статус эпохи не трогаем.
+      await restoreMemorySnapshot(id, reset.snapshot, fields);
     }
+
     await recordEvent({
       botId: reset.botId,
       visitorId: id,
-      type: revoked ? 'memory_restored' : 'memory_hidden',
-      payload: { resetId },
+      type: hasRevoked ? (revoked ? 'memory_restored' : 'memory_hidden') : 'memory_fields_restored',
+      payload: { resetId, ...(fields.length > 0 ? { fields } : {}) },
     });
 
     return Response.json({ ok: true, memoryResets: await listMemoryResets(id) });

@@ -364,6 +364,21 @@ try {
     `name=${cardRevived.data?.name ?? 'null'}`,
   );
 
+  // Точечный возврат: имя стёрто вручную → вернуть только поле «имя» из снимка.
+  await supabase.from('visitors').update({ name: null }).eq('id', cardId);
+  const fieldsRes = await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}/memory`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ resetId: buttonEpoch?.id, fields: ['name'] }),
+  });
+  check('точечный возврат полей → ok', fieldsRes.ok, `HTTP ${fieldsRes.status}`);
+  const cardFields = await supabase.from('visitors').select('name').eq('id', cardId).maybeSingle();
+  check(
+    'поле «имя» возвращено точечно',
+    cardFields.data?.name === NAME,
+    `name=${cardFields.data?.name ?? 'null'}`,
+  );
+
   // «вернуть» и вторую эпоху: активное окно снова включает старую переписку
   const revoke2 = await fetch(`${BASE}/api/admin/visitors/${encodeURIComponent(cardId)}/memory`, {
     method: 'POST',

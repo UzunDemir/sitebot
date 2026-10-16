@@ -10,7 +10,7 @@
  * sql/0003_seller.sql is not applied yet the panel shows a migration hint.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function api(
@@ -144,6 +144,7 @@ const EVENT_LABELS: Record<string, string> = {
   memory_reset: 'память сброшена («забыть меня»)',
   memory_restored: 'память возвращена в активную',
   memory_hidden: 'память снова скрыта',
+  memory_fields_restored: 'поля эпохи возвращены в карточку',
 };
 
 function splitLines(value: string): string[] {
@@ -221,6 +222,7 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
   const [purchaseForm, setPurchaseForm] = useState({ title: '', amount: '', status: 'completed' });
   const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [memoryBusy, setMemoryBusy] = useState(false);
+  const [expandedEpoch, setExpandedEpoch] = useState('');
 
   const loadList = useCallback(async (): Promise<void> => {
     setListBusy(true);
@@ -364,6 +366,18 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ resetId, revoked }),
+    });
+    setMemoryBusy(false);
+    if (res.ok) void loadDetail(detail.visitor.id);
+  }
+
+  async function restoreEpochFields(resetId: string, fields: string[]) {
+    if (!detail || memoryBusy || fields.length === 0) return;
+    setMemoryBusy(true);
+    const res = await api(`/api/admin/visitors/${encodeURIComponent(detail.visitor.id)}/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resetId, fields }),
     });
     setMemoryBusy(false);
     if (res.ok) void loadDetail(detail.visitor.id);
@@ -621,40 +635,71 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   {(detail.memoryResets ?? []).length === 0 ? (
                     <p className="mt-2 text-[11px] text-slate-400">Сбросов не было.</p>
                   ) : (
-                    <ul className="mt-2 divide-y divide-slate-100">
-                      {(detail.memoryResets ?? []).map((epoch) => (
-                        <li key={epoch.id} className="flex flex-wrap items-center gap-2 py-2 text-[11px]">
-                          <span className="text-slate-400">{formatDate(epoch.createdAt)}</span>
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
-                            {epoch.source === 'chat'
-                              ? 'забудь в чате'
-                              : epoch.source === 'admin'
-                                ? 'из админки'
-                                : 'кнопка «Забыть меня»'}
-                          </span>
-                          {epoch.revokedAt ? (
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
-                              в активной памяти
-                            </span>
-                          ) : (
-                            <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-400">
-                              скрыта
-                            </span>
-                          )}
-                          <span className="min-w-0 flex-1 truncate text-slate-500">
-                            {snapshotHint(epoch.snapshot)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void toggleMemoryEpoch(epoch.id, !epoch.revokedAt)}
-                            disabled={memoryBusy}
-                            className="ml-auto text-slate-400 hover:text-indigo-600 disabled:opacity-50"
-                          >
-                            {epoch.revokedAt ? 'скрыть обратно' : 'вернуть в активную'}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <table className="mt-2 w-full text-[11px]">
+                      <thead>
+                        <tr className="text-left text-slate-400">
+                          <th className="w-16 py-1 font-normal">Активна</th>
+                          <th className="py-1 font-normal">Дата</th>
+                          <th className="py-1 font-normal">Источник</th>
+                          <th className="py-1 font-normal">Снимок</th>
+                          <th className="py-1 text-right font-normal">Поля</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(detail.memoryResets ?? []).map((epoch) => (
+                          <Fragment key={epoch.id}>
+                            <tr
+                              onDoubleClick={() =>
+                                setExpandedEpoch((prev) => (prev === epoch.id ? '' : epoch.id))
+                              }
+                              title="Двойной клик — раскрыть снимок эпохи"
+                            >
+                              <td className="py-1.5 align-top">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(epoch.revokedAt)}
+                                  disabled={memoryBusy}
+                                  onChange={(e) => void toggleMemoryEpoch(epoch.id, e.target.checked)}
+                                  title="Галочка — эпоха в активной памяти (переписка снова видна модели)"
+                                />
+                              </td>
+                              <td className="py-1.5 align-top text-slate-500">{formatDate(epoch.createdAt)}</td>
+                              <td className="py-1.5 align-top text-slate-500">
+                                {epoch.source === 'chat'
+                                  ? 'забудь в чате'
+                                  : epoch.source === 'admin'
+                                    ? 'из админки'
+                                    : 'кнопка «Забыть меня»'}
+                              </td>
+                              <td className="py-1.5 align-top text-slate-600">{snapshotHint(epoch.snapshot)}</td>
+                              <td className="py-1.5 align-top text-right">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedEpoch((prev) => (prev === epoch.id ? '' : epoch.id))
+                                  }
+                                  className="text-slate-400 hover:text-indigo-600"
+                                >
+                                  {expandedEpoch === epoch.id ? '▾ свернуть' : '▸ открыть'}
+                                </button>
+                              </td>
+                            </tr>
+                            {expandedEpoch === epoch.id && (
+                              <tr>
+                                <td colSpan={5} className="bg-slate-50/60 p-2">
+                                  <EpochSnapshot
+                                    key={`epoch-${epoch.id}`}
+                                    epoch={epoch}
+                                    busy={memoryBusy}
+                                    onRestore={(fields) => void restoreEpochFields(epoch.id, fields)}
+                                  />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                 </div>
 
@@ -783,5 +828,101 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Поля снимка эпохи для таблицы (key = имя поля в снапшоте). */
+function snapshotFields(snapshot: Record<string, unknown>): Array<{ key: string; label: string; text: string }> {
+  const out: Array<{ key: string; label: string; text: string }> = [];
+  const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+  const list = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+  if (str(snapshot.name)) out.push({ key: 'name', label: 'Имя', text: str(snapshot.name) });
+  const contacts = snapshot.contacts as Record<string, unknown> | undefined;
+  if (contacts && typeof contacts === 'object' && Object.keys(contacts).length > 0) {
+    out.push({
+      key: 'contacts',
+      label: 'Контакты',
+      text: Object.entries(contacts)
+        .map(([key, value]) => `${key}: ${String(value)}`)
+        .join('; '),
+    });
+  }
+  if (str(snapshot.digest)) out.push({ key: 'digest', label: 'Дайджест', text: str(snapshot.digest) });
+  const interests = list(snapshot.interests);
+  if (interests.length > 0) out.push({ key: 'interests', label: 'Интересы', text: interests.join('; ') });
+  const preferences = list(snapshot.preferences);
+  if (preferences.length > 0) {
+    out.push({ key: 'preferences', label: 'Предпочтения', text: preferences.join('; ') });
+  }
+  const complaints = list(snapshot.complaints);
+  if (complaints.length > 0) out.push({ key: 'complaints', label: 'Претензии', text: complaints.join('; ') });
+  const birthday = snapshot.birthday as { day?: unknown; month?: unknown; year?: unknown } | undefined;
+  if (birthday && typeof birthday === 'object') {
+    const parts = [birthday.day, birthday.month, birthday.year].filter((value) => value != null);
+    if (parts.length > 0) {
+      out.push({ key: 'birthday', label: 'День рождения', text: parts.map(String).join('.') });
+    }
+  }
+  return out;
+}
+
+/** Раскрытый снимок эпохи: таблица полей с галочками и возвратом выбранных. */
+function EpochSnapshot({
+  epoch,
+  busy,
+  onRestore,
+}: {
+  epoch: VisitorMemoryReset;
+  busy: boolean;
+  onRestore: (fields: string[]) => void;
+}) {
+  const fields = useMemo(() => snapshotFields(epoch.snapshot), [epoch.snapshot]);
+  const [selected, setSelected] = useState<string[]>(() => fields.map((field) => field.key));
+
+  if (fields.length === 0) {
+    return (
+      <p className="text-[11px] text-slate-400">Снимок пуст — на момент сброса карточка была пустой.</p>
+    );
+  }
+
+  return (
+    <div>
+      <table className="w-full text-[11px]">
+        <tbody className="divide-y divide-slate-100">
+          {fields.map((field) => (
+            <tr key={field.key}>
+              <td className="w-8 py-1 align-top">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(field.key)}
+                  onChange={(e) => {
+                    setSelected((prev) =>
+                      e.target.checked ? [...prev, field.key] : prev.filter((key) => key !== field.key),
+                    );
+                  }}
+                />
+              </td>
+              <td className="w-36 py-1 align-top text-slate-500">{field.label}</td>
+              <td className="py-1 align-top text-slate-700">{field.text}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={busy || selected.length === 0}
+          onClick={() => onRestore(selected)}
+          className="border border-slate-300 px-3 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+        >
+          Вернуть выбранные поля в карточку
+        </button>
+        <span className="text-[10px] text-slate-400">
+          Заполняются только пустые поля карточки — ваши правки не перезаписываются.
+        </span>
+      </div>
+    </div>
   );
 }

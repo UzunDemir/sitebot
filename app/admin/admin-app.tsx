@@ -102,6 +102,27 @@ export default function AdminApp() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedBotId, setSelectedBotId] = useState('');
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  // Тема админки: светлая/тёмная (класс на <html> + localStorage).
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem('sitebot-admin-dark') === '1') setTheme('dark');
+    } catch {
+      // storage unavailable — остаёмся на светлой
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      document.documentElement.classList.toggle('dark-admin', theme === 'dark');
+      window.localStorage.setItem('sitebot-admin-dark', theme === 'dark' ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
   const loadBots = useCallback(async (): Promise<void> => {
     const res = await api('/api/admin/bots');
@@ -175,6 +196,13 @@ export default function AdminApp() {
           >
             ← к боту
           </a>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            {theme === 'dark' ? '☀️ Светлая тема' : '🌙 Тёмная тема'}
+          </button>
           <button
             type="button"
             onClick={async () => {

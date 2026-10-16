@@ -353,19 +353,25 @@ export async function setMemoryResetRevoked(resetId: string, revoked: boolean): 
 export async function restoreMemorySnapshot(
   visitorId: string,
   snapshot: Record<string, unknown>,
+  fields?: string[],
 ): Promise<boolean> {
   try {
     const visitor = await getVisitorById(visitorId);
     if (!visitor) return false;
+
+    // fields (Ф6, точечный возврат): если задан — восстанавливаем только эти поля.
+    const allowed = fields && fields.length > 0 ? new Set(fields) : null;
+    const ok = (key: string): boolean => !allowed || allowed.has(key);
 
     const patch: VisitorProfilePatch = {};
     const str = (value: unknown): string | null =>
       typeof value === 'string' && value.trim() ? value.trim() : null;
 
     const snapshotName = str(snapshot.name);
-    if (!visitor.name && snapshotName) patch.name = snapshotName;
+    if (ok('name') && !visitor.name && snapshotName) patch.name = snapshotName;
 
     if (
+      ok('contacts') &&
       Object.keys(visitor.contacts).length === 0 &&
       snapshot.contacts &&
       typeof snapshot.contacts === 'object' &&
@@ -374,13 +380,13 @@ export async function restoreMemorySnapshot(
       patch.contacts = snapshot.contacts as Record<string, string>;
     }
     const snapshotDigest = str(snapshot.digest);
-    if (!visitor.memory_digest && snapshotDigest) patch.memory_digest = snapshotDigest;
+    if (ok('digest') && !visitor.memory_digest && snapshotDigest) patch.memory_digest = snapshotDigest;
 
     const interests = Array.isArray(snapshot.interests)
       ? snapshot.interests.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
       : [];
     const currentInterests = Array.isArray(visitor.meta.interests) ? visitor.meta.interests : [];
-    if (currentInterests.length === 0 && interests.length > 0) {
+    if (ok('interests') && currentInterests.length === 0 && interests.length > 0) {
       patch.meta = { ...visitor.meta, interests };
     }
 
@@ -389,7 +395,7 @@ export async function restoreMemorySnapshot(
         snapshot.birthday && typeof snapshot.birthday === 'object' && !Array.isArray(snapshot.birthday)
           ? (snapshot.birthday as { day?: unknown; month?: unknown; year?: unknown })
           : null;
-      if (birthday) {
+      if (birthday && ok('birthday')) {
         if (!visitor.birthday_day && typeof birthday.day === 'number') patch.birthday_day = birthday.day;
         if (!visitor.birthday_month && typeof birthday.month === 'number') patch.birthday_month = birthday.month;
         if (!visitor.birthday_year && typeof birthday.year === 'number') patch.birthday_year = birthday.year;
@@ -397,11 +403,15 @@ export async function restoreMemorySnapshot(
       const preferences = Array.isArray(snapshot.preferences)
         ? snapshot.preferences.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [];
-      if (visitor.preferences.length === 0 && preferences.length > 0) patch.preferences = preferences;
+      if (ok('preferences') && visitor.preferences.length === 0 && preferences.length > 0) {
+        patch.preferences = preferences;
+      }
       const complaints = Array.isArray(snapshot.complaints)
         ? snapshot.complaints.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [];
-      if (visitor.complaints.length === 0 && complaints.length > 0) patch.complaints = complaints;
+      if (ok('complaints') && visitor.complaints.length === 0 && complaints.length > 0) {
+        patch.complaints = complaints;
+      }
     }
 
     if (Object.keys(patch).length === 0) return true; // восстанавливать нечего — это норма

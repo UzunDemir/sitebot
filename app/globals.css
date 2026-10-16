@@ -24,3 +24,68 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ================================================================
+   Админка: прямоугольный стиль и две темы (светлая/тёмная).
+   admin-shell/admin-rect — из app/admin/page.tsx;
+   dark-admin висит на <html> (AdminApp + localStorage).
+   ================================================================ */
+.admin-shell {
+  background: #f1f5f9;
+}
+
+.admin-rect :where(*) {
+  border-radius: 0 !important;
+}
+
+.dark-admin .admin-shell {
+  background: #0b0f14;
+}
+
+/* surfaces */
+.dark-admin .bg-white { background-color: #10161f; }
+.dark-admin .bg-slate-50 { background-color: #151c26; }
+.dark-admin .bg-slate-50\/60 { background-color: rgba(21, 28, 38, 0.6); }
+.dark-admin .bg-slate-100 { background-color: #1a2330; }
+.dark-admin .bg-slate-900 { background-color: #05080c; }
+.dark-admin .bg-indigo-50 { background-color: #1c2233; }
+.dark-admin .bg-amber-50 { background-color: #262010; }
+.dark-admin .bg-amber-100 { background-color: #332a15; }
+.dark-admin .bg-emerald-50 { background-color: #0f2419; }
+.dark-admin .bg-red-50 { background-color: #261214; }
+.dark-admin .hover\:bg-slate-50:hover { background-color: #1a2330; }
+
+/* text */
+.dark-admin .text-slate-900 { color: #e8eef5; }
+.dark-admin .text-slate-800 { color: #dce5ee; }
+.dark-admin .text-slate-700 { color: #c8d2de; }
+.dark-admin .text-slate-600 { color: #aab6c4; }
+.dark-admin .text-slate-500 { color: #8c99a9; }
+.dark-admin .text-slate-400 { color: #6c7a8a; }
+.dark-admin .text-slate-100 { color: #d7e0ea; }
+.dark-admin .text-amber-700 { color: #e0bd72; }
+.dark-admin .text-amber-800 { color: #e7c98a; }
+.dark-admin .text-emerald-600 { color: #79d3a0; }
+.dark-admin .text-emerald-700 { color: #8fe0b0; }
+.dark-admin .text-red-600 { color: #f08d8d; }
+.dark-admin .text-red-700 { color: #f4a0a0; }
+
+/* borders + dividers */
+.dark-admin .border-slate-100 { border-color: #1b2330; }
+.dark-admin .border-slate-200 { border-color: #212b39; }
+.dark-admin .border-slate-300 { border-color: #33415a; }
+.dark-admin .border-indigo-200 { border-color: #33406b; }
+.dark-admin .border-amber-200 { border-color: #4a3c1f; }
+.dark-admin .border-emerald-200 { border-color: #23503a; }
+.dark-admin .border-red-200 { border-color: #4f2729; }
+.dark-admin .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1b2330; }
+
+/* поля ввода */
+.dark-admin :where(input, textarea, select) {
+  background-color: #0d131b;
+  color: #e8eef5;
+}
+.dark-admin :where(input, textarea, select)::placeholder {
+  color: #5f6c7c;
+}
+
