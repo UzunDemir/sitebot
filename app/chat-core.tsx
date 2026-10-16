@@ -143,7 +143,7 @@ function TypingDots({
         className="inline-flex items-end gap-1"
         style={{
           height: mode === 'run' ? size : size + jump,
-          marginBottom: 3,
+          marginBottom: 1,
           ...({ '--sitebot-dot-jump': `${jump}px` } as CSSProperties),
         }}
       >
