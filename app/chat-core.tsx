@@ -587,6 +587,25 @@ export function Chat({
     window.setTimeout(() => setForget(0), 4000);
   }
 
+  /** Переход к непрочитанным касаниям: скролл к первому из них + сброс кружка. */
+  function jumpToUnread() {
+    const list = listRef.current;
+    const count = openUnread;
+    setOpenUnread(0);
+    if (!list) return;
+    if (count > 0) {
+      const bubbles = list.querySelectorAll<HTMLElement>('[data-nudge-bubble]');
+      if (bubbles.length > 0) {
+        bubbles[Math.max(0, bubbles.length - count)].scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+        return;
+      }
+    }
+    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+  }
+
   const bubbleRadius = p.radius;
   const greetingText = visitor?.returning
     ? visitor.name
@@ -625,17 +644,40 @@ export function Chat({
           }
         }}
       >
-        {t.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={t.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
-        ) : (
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-white"
-            style={{ backgroundColor: p.accent }}
-          >
-            💬
-          </div>
-        )}
+        <div className="relative shrink-0">
+          {t.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={t.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
+          ) : (
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-white"
+              style={{ backgroundColor: p.accent }}
+            >
+              💬
+            </div>
+          )}
+          {/* Непрочитанные касания: красный кружок поверх аватара — как бейдж
+              свёрнутого окна (красный, белая обводка, тень). Клик — переход
+              к непрочитанным и сброс счётчика. */}
+          {openUnread > 0 && (
+            <button
+              type="button"
+              onClick={jumpToUnread}
+              title="Новые сообщения — перейти"
+              aria-label={`Непрочитанных сообщений: ${openUnread}`}
+              className="absolute -right-2 -top-2 z-10 flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-semibold text-white"
+              style={{
+                backgroundColor: '#ef4444',
+                border: '2px solid #ffffff',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.28)',
+                boxSizing: 'border-box',
+                lineHeight: 1,
+              }}
+            >
+              {openUnread > 9 ? '9+' : openUnread}
+            </button>
+          )}
+        </div>
         <div>
           <h1 className="text-sm font-semibold" style={{ color: p.headerText }}>
             {title}
@@ -650,21 +692,6 @@ export function Chat({
           className={`ml-auto inline-flex h-2.5 w-2.5 rounded-full ${busy ? 'bg-amber-400' : 'bg-emerald-500'}`}
           title={busy ? 'Генерирую ответ' : 'Готов'}
         />
-        {openUnread > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              setOpenUnread(0);
-              listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-            }}
-            title="Новые сообщения"
-            aria-label={`Непрочитанных сообщений: ${openUnread}`}
-            className="ml-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-xs font-semibold text-white"
-            style={{ backgroundColor: p.accent }}
-          >
-            {openUnread > 9 ? '9+' : openUnread}
-          </button>
-        )}
         {compact && inFrame && (
           <button
             type="button"
@@ -777,6 +804,7 @@ export function Chat({
                     Бот написал сам
                   </span>
                   <div
+                    data-nudge-bubble
                     className="px-4 py-3 text-sm whitespace-pre-wrap"
                     style={{
                       backgroundColor: p.botBubbleBg,
