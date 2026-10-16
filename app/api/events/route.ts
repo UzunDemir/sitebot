@@ -25,6 +25,12 @@ const EVENT_TYPES = new Set([
   'refusal',
   'style_flags',
   'tactic_used',
+  'loader_loaded',
+  'loader_tap',
+  'loader_drag',
+  'loader_open',
+  'loader_frame_ready',
+  'loader_error',
 ]);
 
 const MAX_PAYLOAD = 2000;

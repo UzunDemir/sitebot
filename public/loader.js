@@ -42,13 +42,53 @@
     label: script.getAttribute('data-label') || 'Открыть чат',
   };
 
-  var LOADER_VERSION = 'v14';
+  var LOADER_VERSION = 'v15';
   try {
     window.__sitebotLoader = LOADER_VERSION;
   } catch (e) {
     // ignore
   }
   console.log('[sitebot] loader ' + LOADER_VERSION + ' · bot ' + botKey);
+
+  // ---------- диагностика: телеметрия стадий (видна в событиях бота).
+  // На реальных устройствах показывает, где обрывается цепочка:
+  // loaded -> tap/drag -> open -> frame_ready (+ ошибки загрузчика).
+  function reportStage(stage, extra) {
+    try {
+      var payload = { v: LOADER_VERSION, w: window.innerWidth, h: window.innerHeight };
+      if (extra) {
+        for (var key in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, key)) payload[key] = extra[key];
+        }
+      }
+      fetch(apiOrigin + '/api/events', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: JSON.stringify({ botKey: botKey, type: 'loader_' + stage, payload: payload }),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (e) {
+      // диагностика не должна ломать загрузчик
+    }
+  }
+  reportStage('loaded', {
+    touch: 'ontouchstart' in window ? 1 : 0,
+    ua: navigator.userAgent.slice(0, 140),
+  });
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('error', function (event) {
+      try {
+        var file = event && event.filename ? String(event.filename) : '';
+        if (file.indexOf('loader.js') === -1) return;
+        reportStage('error', {
+          line: event.lineno || 0,
+          msg: String(event.message || '').slice(0, 180),
+        });
+      } catch (e) {
+        // ignore
+      }
+    });
+  }
   var DEFAULT_COLOR = '#4f46e5';
   var DEFAULT_ICON = '\uD83D\uDCAC';
   var Z = '2147483000';
@@ -565,9 +605,9 @@
       var p = e.touches ? e.touches[0] : e;
       var dx = p.clientX - startX;
       var dy = p.clientY - startY;
-      // Порог для пальца больше: лёгкое смещение при касании — это тап,
-      // а не перетаскивание (с 4 px кнопка «не нажималась» на телефоне).
-      var threshold = touchInput ? 12 : 4;
+      // Порог для пальца заметно больше: лёгкое смещение/дрожь при касании —
+      // это тап, а не перетаскивание (реальный драг двигает на десятки px).
+      var threshold = touchInput ? 22 : 4;
       if (Math.abs(dx) + Math.abs(dy) > threshold) moved = true;
       var np = clampPos({ left: startLeft + dx, top: startTop + dy });
       sessionPos = np;
@@ -601,6 +641,7 @@
       if (moved) {
         // Перетащили: синтетический click после касания приходит позже —
         // окно побольше, чтобы виджет не «открылся» случайно после драга.
+        reportStage('drag', { touch: touchInput ? 1 : 0 });
         state.suppressClick = true;
         window.setTimeout(function () {
           state.suppressClick = false;
@@ -608,6 +649,7 @@
       } else if (touchInput) {
         // Тап по кнопке: открываем/закрываем здесь же и гасим синтетический
         // click (и совместимостные mouse-события после касания).
+        reportStage('tap', {});
         state.suppressClick = true;
         window.setTimeout(function () {
           state.suppressClick = false;
@@ -670,6 +712,9 @@
     frame.src = apiOrigin + '/embed/' + encodeURIComponent(botKey);
     frame.title = attrs.label;
     frame.setAttribute('allow', 'clipboard-write; autoplay');
+    frame.addEventListener('load', function () {
+      reportStage('frame_ready', {});
+    });
     frame.style.cssText = 'display:block;width:100%;height:100%;border:0;background:#fff;';
     frameClip.style.cssText = [
       'position:absolute',
@@ -790,6 +835,7 @@
     if (!frameWrap) createFrame();
     state.opened = !state.opened;
     if (state.opened) {
+      reportStage('open', {});
       hideTeaser(false);
       applyFrame();
       animateOpen();
@@ -918,8 +964,16 @@
     });
   }
 
+  function mountLauncher() {
+    if (document.body) {
+      document.body.appendChild(launcher);
+      return;
+    }
+    // Скрипт мог выполниться до появления <body> (async в <head>) — ждём DOM.
+    document.addEventListener('DOMContentLoaded', mountLauncher);
+  }
   applyLauncher();
-  document.body.appendChild(launcher);
+  mountLauncher();
   window.setTimeout(finishInit, 500);
 
   try {
