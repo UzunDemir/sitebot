@@ -14,7 +14,11 @@ import {
 } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
 import { readBrowserSessionKey, readBrowserVisitorKey, rotateSessionKey } from '@/lib/session-key';
-import { playMessageSound, unlockMessageSound } from '@/lib/notification-sound';
+import {
+  installMessageSoundUnlock,
+  playMessageSound,
+  unlockMessageSound,
+} from '@/lib/notification-sound';
 
 export type ChatBotInfo = {
   publicKey: string;
@@ -206,6 +210,22 @@ export function Chat({
   const dotsMode = t.typingDotsMode ?? 'jump';
   // Звук нового сообщения (дашборд → «Интерфейс»); по умолчанию включён.
   const soundOnMessage = t.soundOnMessage !== false;
+  // При встроенном виджете звук играет верхняя страница (loader): на мобильных
+  // касание сайта разблокирует звук там, а iOS Safari не наследует активацию
+  // в iframe. Если loader старый (без рукопожатия) — играем сами, как раньше.
+  const loaderSoundRef = useRef(false);
+  function emitMessageSound(): void {
+    if (!soundOnMessage) return;
+    if (window.parent !== window && loaderSoundRef.current) {
+      try {
+        window.parent.postMessage({ type: 'sitebot:sound', sound: true }, '*');
+        return;
+      } catch {
+        // пост в родителя не удался — играем локально
+      }
+    }
+    playMessageSound();
+  }
   const title = t.title || bot.name;
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
@@ -321,20 +341,25 @@ export function Chat({
     prevStatusRef.current = status;
     if (!soundOnMessage) return;
     if (previous !== 'ready' && status === 'ready' && document.visibilityState === 'hidden') {
-      playMessageSound();
+      emitMessageSound();
     }
   }, [status, soundOnMessage]);
 
-  // Браузеры разрешают звук только после первого действия на странице —
-  // «будим» аудио-контекст при первом клике или нажатии клавиши.
+  // Браузеры разрешают звук только после действия в самом виджете — ставим
+  // «разбудильник» на первое касание/клик/клавишу в этом документе.
   useEffect(() => {
-    const unlock = () => unlockMessageSound();
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
+    installMessageSoundUnlock();
+  }, []);
+
+  // Рукопожатие с загрузчиком: он отвечает sitebot:loader, и тогда звук при
+  // встроенном виджете играет верхняя страница (важно для мобильных).
+  useEffect(() => {
+    if (window.parent === window) return;
+    try {
+      window.parent.postMessage({ type: 'sitebot:hello' }, '*');
+    } catch {
+      // not embedded — loader отсутствует
+    }
   }, []);
 
   // Memory lives on the server: the dialog is stored per bot + session and
@@ -465,6 +490,9 @@ export function Chat({
         }
       } else if (data.type === 'sitebot:chat-closed') {
         chatOpenRef.current = false;
+      } else if (data.type === 'sitebot:loader') {
+        // Загрузчик подтвердил, что умеет играть звук (верхняя страница).
+        loaderSoundRef.current = (data as { sound?: unknown }).sound === true;
       }
     }
     window.addEventListener('message', onParentMessage);
@@ -553,7 +581,7 @@ export function Chat({
             // Касание остаётся в ленте до ответа посетителя (как сообщение).
             setLiveNudges((current) => [...current, nudgeText].slice(-6));
             // Звук — один раз на касание (работает и при свёрнутом окне).
-            if (soundOnMessage) playMessageSound();
+            emitMessageSound();
           }
           try {
             window.parent.postMessage({ type: 'sitebot:nudge', text: nudgeText }, '*');
@@ -628,6 +656,8 @@ export function Chat({
 
   function submit(e: { preventDefault(): void }) {
     e.preventDefault();
+    // Отправка — действие пользователя: сразу «будим» звук в этом документе.
+    unlockMessageSound();
     const text = input.trim();
     if (!text || busy) return;
     // Касания остаются в ленте: перед ответом переносим их в сообщения

@@ -244,6 +244,99 @@
     if (!labelEl.parentNode) document.body.appendChild(labelEl);
   }
 
+  // ---------- звук «пришло сообщение» (играет верхняя страница)
+  // На мобильных iOS Safari не наследует активацию пользователя в iframe —
+  // поэтому звук играет сам сайт после первого касания, а виджет только
+  // просит его об этом (sitebot:sound). Web Audio, без файлов.
+  var soundCtx = null;
+  function soundContext() {
+    if (soundCtx) return soundCtx;
+    try {
+      var Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      soundCtx = new Ctor();
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = 'playback';
+      } catch (e) {
+        // iOS < 16.4 — системное поведение
+      }
+      return soundCtx;
+    } catch (e) {
+      return null;
+    }
+  }
+  function warmUpSound(ctx) {
+    try {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.03);
+    } catch (e) {
+      // ignore
+    }
+  }
+  function playChime() {
+    var ctx = soundContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      try {
+        ctx.resume();
+      } catch (e) {
+        // ещё заблокирован — сыграет после первого касания
+      }
+    }
+    try {
+      var start = ctx.currentTime + 0.01;
+      var notes = [880, 1318.5];
+      for (var i = 0; i < notes.length; i++) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = notes[i];
+        var at = start + i * 0.13;
+        gain.gain.setValueAtTime(0, at);
+        gain.gain.linearRampToValueAtTime(0.12, at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.34);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(at);
+        osc.stop(at + 0.4);
+      }
+    } catch (e) {
+      // звук необязателен
+    }
+  }
+  (function installSoundUnlock() {
+    if (typeof window.addEventListener !== 'function') return;
+    var events = ['pointerdown', 'touchstart', 'keydown', 'click'];
+    var handler = function () {
+      var ctx = soundContext();
+      if (!ctx) return;
+      warmUpSound(ctx);
+      var release = function () {
+        if (ctx.state !== 'running') return;
+        for (var i = 0; i < events.length; i++) {
+          window.removeEventListener(events[i], handler, true);
+        }
+      };
+      if (ctx.state === 'suspended') {
+        try {
+          ctx.resume().then(release).catch(function () {});
+        } catch (e) {
+          release();
+        }
+      } else {
+        release();
+      }
+    };
+    for (var i = 0; i < events.length; i++) {
+      window.addEventListener(events[i], handler, true);
+    }
+  })();
+
   function notifyFrame(type) {
     if (!frame || !frame.contentWindow) return;
     try {
@@ -789,6 +882,18 @@
       } else if (data.type === 'sitebot:unread') {
         // Only the counter + pulse — bot touches never pop a text bubble.
         updateBadge(typeof data.count === 'number' ? data.count : 0);
+      } else if (data.type === 'sitebot:sound') {
+        // Виджет просит озвучить новое сообщение — звук играет верхняя страница.
+        if (data.sound !== false) playChime();
+      } else if (data.type === 'sitebot:hello') {
+        // Рукопожатие: сообщаем виджету, что звук здесь поддерживается.
+        try {
+          if (event.source && event.source.postMessage) {
+            event.source.postMessage({ type: 'sitebot:loader', sound: true }, '*');
+          }
+        } catch (e) {
+          // ignore
+        }
       } else if (data.type === 'sitebot:move') {
         moveWindow(data.dx, data.dy);
       } else if (data.type === 'sitebot:move-reset') {
