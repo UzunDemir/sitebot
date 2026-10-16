@@ -561,7 +561,7 @@
     frame = document.createElement('iframe');
     frame.src = apiOrigin + '/embed/' + encodeURIComponent(botKey);
     frame.title = attrs.label;
-    frame.setAttribute('allow', 'clipboard-write');
+    frame.setAttribute('allow', 'clipboard-write; autoplay');
     frame.style.cssText = 'display:block;width:100%;height:100%;border:0;background:#fff;';
     frameClip.style.cssText = [
       'position:absolute',

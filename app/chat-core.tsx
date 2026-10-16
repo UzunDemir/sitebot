@@ -14,6 +14,7 @@ import {
 } from 'react';
 import type { WidgetTheme } from '@/lib/widget-theme';
 import { readBrowserSessionKey, readBrowserVisitorKey, rotateSessionKey } from '@/lib/session-key';
+import { playMessageSound, unlockMessageSound } from '@/lib/notification-sound';
 
 export type ChatBotInfo = {
   publicKey: string;
@@ -203,6 +204,8 @@ export function Chat({
   const dotsSpeed = t.typingDotsSpeed ?? 900;
   const dotsLabel = t.typingLabel ?? 'Печатает';
   const dotsMode = t.typingDotsMode ?? 'jump';
+  // Звук нового сообщения (дашборд → «Интерфейс»); по умолчанию включён.
+  const soundOnMessage = t.soundOnMessage !== false;
   const title = t.title || bot.name;
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
@@ -309,6 +312,30 @@ export function Chat({
   useEffect(() => {
     if (status === 'ready') inputRef.current?.focus({ preventScroll: true });
   }, [status]);
+
+  // Звук нового сообщения: касания («бот написал сам») — всегда, обычный
+  // ответ — только если вкладка была неактивна (посетитель не смотрит).
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const previous = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (!soundOnMessage) return;
+    if (previous !== 'ready' && status === 'ready' && document.visibilityState === 'hidden') {
+      playMessageSound();
+    }
+  }, [status, soundOnMessage]);
+
+  // Браузеры разрешают звук только после первого действия на странице —
+  // «будим» аудио-контекст при первом клике или нажатии клавиши.
+  useEffect(() => {
+    const unlock = () => unlockMessageSound();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   // Memory lives on the server: the dialog is stored per bot + session and
   // the model reads it from the DB (the widget never replays the past chat —
@@ -525,6 +552,8 @@ export function Chat({
             lastNudgeIdRef.current = messageId;
             // Касание остаётся в ленте до ответа посетителя (как сообщение).
             setLiveNudges((current) => [...current, nudgeText].slice(-6));
+            // Звук — один раз на касание (работает и при свёрнутом окне).
+            if (soundOnMessage) playMessageSound();
           }
           try {
             window.parent.postMessage({ type: 'sitebot:nudge', text: nudgeText }, '*');

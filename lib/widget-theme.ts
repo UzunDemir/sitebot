@@ -79,6 +79,8 @@ export type WidgetTheme = {
   typingDotsJump?: number;
   /** Скорость цикла анимации точек, мс (300..3000). */
   typingDotsSpeed?: number;
+  /** Звук нового сообщения от бота (переключатель в дашборде; по умолчанию включён). */
+  soundOnMessage?: boolean;
   /** Fine-grained palette overrides. */
   colors?: WidgetColors;
   /** Proactive teaser message near the launcher. */
@@ -198,6 +200,7 @@ export function parseWidgetTheme(input: unknown): WidgetTheme {
   theme.typingDotsSize = intInRange(raw.typingDotsSize, 3, 10);
   theme.typingDotsJump = intInRange(raw.typingDotsJump, 1, 10);
   theme.typingDotsSpeed = intInRange(raw.typingDotsSpeed, 300, 3000);
+  if (typeof raw.soundOnMessage === 'boolean') theme.soundOnMessage = raw.soundOnMessage;
 
   theme.colors = colors(raw.colors);
   theme.proactive = proactive(raw.proactive);

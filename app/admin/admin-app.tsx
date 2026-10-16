@@ -11,6 +11,7 @@ import {
 } from '@/lib/bot-settings';
 import { KNOWLEDGE_PACKS } from '@/lib/knowledge-packs';
 import { TACTICS } from '@/lib/tactics';
+import { playMessageSound } from '@/lib/notification-sound';
 import VisitorsPanel from './visitors-panel';
 
 const CHANNEL_CARDS: Array<{ name: string; status: string; note: string }> = [
@@ -1395,6 +1396,31 @@ function BotSettings({
               />
             </label>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs font-medium text-slate-500">Звук нового сообщения</p>
+          <p className="text-[10px] text-slate-400">
+            Короткий мягкий сигнал: касания («бот написал сам») — всегда; обычный ответ — только
+            если вкладка была неактивна. Браузеры разрешают звук после первого клика или нажатия
+            на странице — это нормально.
+          </p>
+          <label className="mt-2 flex items-start gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={theme.soundOnMessage !== false}
+              onChange={(e) => setThemeField('soundOnMessage', e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>Включён</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => playMessageSound()}
+            className="mt-2 rounded-xl border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            ▶ Прослушать
+          </button>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
