@@ -193,7 +193,12 @@ export function resolveStyle(
 }
 
 /** Блок промпта: жёсткие правила текущего ответа (приоритетнее общих шкал). */
-export function buildStyleBlock(style: StyleConfig, corrective: string[] = []): string | null {
+export function buildStyleBlock(
+  style: StyleConfig,
+  corrective: string[] = [],
+  /** Выбранная тактика (lib/tactics.ts) — формулировка шага к цели. */
+  tacticLine?: string | null,
+): string | null {
   const lines: string[] = [];
 
   if (style.ctaPolicy === 'none') {
@@ -204,6 +209,9 @@ export function buildStyleBlock(style: StyleConfig, corrective: string[] = []): 
     lines.push('Можно одно мягкое предложение следующего шага — без давления.');
   } else {
     lines.push('Заверши ответ одним конкретным предложением следующего шага.');
+  }
+  if (tacticLine) {
+    lines.push(tacticLine);
   }
   if (!style.phoneAskAllowed) {
     lines.push('Не проси телефон, номер или звонок в этом ответе.');

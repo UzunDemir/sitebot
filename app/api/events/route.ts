@@ -24,6 +24,7 @@ const EVENT_TYPES = new Set([
   'memory_reset',
   'refusal',
   'style_flags',
+  'tactic_used',
 ]);
 
 const MAX_PAYLOAD = 2000;

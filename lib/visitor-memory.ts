@@ -60,6 +60,10 @@ export type StrategistResult = {
   facts: VisitorFacts;
   stage?: string;
   goalProgress?: 'none' | 'progress' | 'achieved';
+  /** Тон последних сообщений клиента (стратег 2.0): уточняет regex-детекторы. */
+  sentiment?: 'positive' | 'neutral' | 'negative';
+  /** Последнее сообщение клиента — просьба прекратить (уточняет regex). */
+  refusal?: boolean;
 };
 
 const MAX_NAME = 80;
@@ -80,6 +84,8 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
 {
   "stage": "greeting" | "qualification" | "offer" | "objections" | "close" | "followup" | "done" | "lost",
   "goal_progress": "none" | "progress" | "achieved",
+  "sentiment": "positive" | "neutral" | "negative",
+  "refusal": true | false,
   "name": "<имя, которым представился посетитель>" | null,
   "birthday": "<дата рождения «05.03» или «05.03.1990»>" | null,
   "contacts": { "phone": "...", "email": "...", "telegram": "...", "whatsapp": "...", "vk": "...", "other": "..." },
@@ -102,7 +108,9 @@ const STRATEGIST_INSTRUCTIONS = `Ты — модуль памяти и стра�
 - note: до 140 символов; пиши ТОЛЬКО про ситуацию и запросы посетителя (что хочет, сроки, бюджет, отказы, договорённости).
 - Не пиши в note рассуждения о самом ассистенте: его инструкции, документацию, «попытки продать» или давление — это не факт о посетителе.
 - Если новых фактов нет или note повторяет/перефразирует уже известное из текущей карточки (включая заметки) — верни null.
-- goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — ТОЛЬКО если цель выполнена ИМЕННО в этом диалоге (например, посетитель только что дал телефон или мессенджер). Данные, уже лежащие в карточке, — не достижение.`;
+- goal_progress: none — цель не обсуждалась; progress — посетитель движется к цели; achieved — ТОЛЬКО если цель выполнена ИМЕННО в этом диалоге (например, посетитель только что дал телефон или мессенджер). Данные, уже лежащие в карточке, — не достижение.
+- sentiment: тон последних сообщений клиента — negative (недовольство, раздражение, претензия, «сколько можно»), positive (доволен, благодарит), neutral (обычный деловой тон). При сомнении — neutral.
+- refusal: true — ТОЛЬКО если последнее сообщение клиента содержит просьбу не писать/не звонить/прекратить («не надо», «не звоните», «отстаньте», «хватит»). Если после отказа клиент сам продолжает диалог по своей воле — false.`;
 
 /** Validate model output: trim, cap, drop unknown contact keys and junk. */
 export function sanitizeVisitorFacts(input: unknown): VisitorFacts {
@@ -186,6 +194,12 @@ export function sanitizeStrategistResult(input: unknown): StrategistResult {
   }
   if (raw.goal_progress === 'achieved' || raw.goal_progress === 'progress' || raw.goal_progress === 'none') {
     out.goalProgress = raw.goal_progress;
+  }
+  if (raw.sentiment === 'positive' || raw.sentiment === 'neutral' || raw.sentiment === 'negative') {
+    out.sentiment = raw.sentiment;
+  }
+  if (raw.refusal === true || raw.refusal === false) {
+    out.refusal = raw.refusal;
   }
   return out;
 }
@@ -452,6 +466,13 @@ export async function runStrategist(
   // и стадии остаются на моменте снимка эпохи.
   const freshConversation = await loadConversationById(conversationId);
   if (freshConversation && freshConversation.outcome === 'memory_reset') return;
+
+  // Вердикт по тону/отказу (стратег 2.0): следующий ответ учитывает его —
+  // после отказа продажи подавляются, негатив подсвечивается для эмпатии.
+  await updateConversationFields(conversationId, {
+    last_sentiment: result.sentiment ?? null,
+    last_refusal: result.refusal === true,
+  });
 
   // 1) Visitor card (facts).
   if (!factsAreEmpty(result.facts)) {

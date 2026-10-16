@@ -225,6 +225,10 @@ export type ConversationMeta = {
   silencedUntil: string | null;
   /** Последние пост-проверки стиля (для корректировки следующего ответа). */
   styleFlags: { flags?: string[]; at?: string } | null;
+  /** Стратег 2.0: вердикт по тону/отказу и последняя тактика ответа (sql/0007). */
+  lastSentiment: 'positive' | 'neutral' | 'negative' | null;
+  lastRefusal: boolean;
+  lastTactic: string | null;
 };
 
 function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
@@ -244,11 +248,17 @@ function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
       row.style_flags && typeof row.style_flags === 'object' && !Array.isArray(row.style_flags)
         ? (row.style_flags as { flags?: string[]; at?: string })
         : null,
+    lastSentiment:
+      row.last_sentiment === 'positive' || row.last_sentiment === 'neutral' || row.last_sentiment === 'negative'
+        ? row.last_sentiment
+        : null,
+    lastRefusal: row.last_refusal === true,
+    lastTactic: typeof row.last_tactic === 'string' ? row.last_tactic : null,
   };
 }
 
 const CONVERSATION_META_COLUMNS =
-  'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id, cta_sent, phone_asked, refusals, silenced_until, style_flags';
+  'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id, cta_sent, phone_asked, refusals, silenced_until, style_flags, last_sentiment, last_refusal, last_tactic';
 /** sql/0003 без 0007: стиль-колонок ещё нет. */
 const CONVERSATION_META_NO_STYLE = 'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id';
 const CONVERSATION_META_LEGACY = 'id, bot_id';
@@ -332,6 +342,9 @@ export type ConversationPatch = {
   refusals?: number;
   silenced_until?: string | null;
   style_flags?: { flags: string[]; at: string };
+  last_sentiment?: string | null;
+  last_refusal?: boolean;
+  last_tactic?: string | null;
 };
 
 /** Best-effort conversation update; degrades on the pre-0003 schema. */

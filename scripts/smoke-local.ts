@@ -64,6 +64,7 @@ import {
   styleText,
   type StyleContext,
 } from '../lib/style';
+import { pickTactic } from '../lib/tactics';
 import { buildSystemPrompt, personalityRules, sanitizeEchoedRefusal } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
@@ -387,6 +388,37 @@ function main(): void {
       console.log('  ✓ шкалы 2.0: детекторы и resolveStyle работают (CTA-политика, кулдаун, бюджет, temperature)');
     } else {
       console.error(`❌ шкалы 2.0: detectors=${detectorsOk} style=${styleOk}`);
+      failures += 1;
+    }
+
+    // --- стратег 2.0: тактики (выбор, ротация, выключение)
+    const tacticCtx = (
+      over: Partial<{ stage: string; lastTactic: string | null; negative: boolean; suppressed: boolean }>,
+    ) => ({
+      stage: 'close',
+      lastTactic: null as string | null,
+      negative: false,
+      suppressed: false,
+      ...over,
+    });
+    const tClose = pickTactic({ goal: 'call', aggressiveness: 90, cunning: 100 }, tacticCtx({}));
+    const tRot = pickTactic(
+      { goal: 'call', aggressiveness: 90, cunning: 100 },
+      tacticCtx({ lastTactic: 'choice-close' }),
+    );
+    const tacticsOk =
+      tClose?.id === 'choice-close' &&
+      Boolean(tRot) &&
+      tRot?.id !== 'choice-close' &&
+      pickTactic({ goal: 'none', aggressiveness: 90 }, tacticCtx({})) === null &&
+      pickTactic({ goal: 'call', aggressiveness: 90 }, tacticCtx({ negative: true })) === null &&
+      pickTactic({ goal: 'call', aggressiveness: 90 }, tacticCtx({ suppressed: true })) === null &&
+      pickTactic({ goal: 'call', aggressiveness: 15 }, tacticCtx({})) === null;
+
+    if (tacticsOk) {
+      console.log('  ✓ стратег 2.0: тактики выбираются, ротируются и выключаются в негативе');
+    } else {
+      console.error(`❌ стратег 2.0: tactics=${tacticsOk} first=${tClose?.id ?? 'null'} rot=${tRot?.id ?? 'null'}`);
       failures += 1;
     }
 

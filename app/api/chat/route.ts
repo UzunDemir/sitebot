@@ -57,6 +57,7 @@ import {
   styleText,
   styleTextStream,
 } from '@/lib/style';
+import { pickTactic } from '@/lib/tactics';
 import { getActiveSince, softResetVisitor } from '@/lib/memory-window';
 import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '@/lib/clock';
 import { formatBirthday, isBirthdayToday, makeBirthday, type Birthday } from '@/lib/birthday';
@@ -234,8 +235,12 @@ export async function POST(req: Request): Promise<Response> {
 
     // --- шкалы: реальная механика (sql/0007). Негатив/отказ подавляют продажи,
     // отказ запускает «остывание», CTA и просьбы контакта — по бюджету.
-    const negativeNow = isNegativeMessage(query);
+    const negativeNow =
+      isNegativeMessage(query) || conversationMeta?.lastSentiment === 'negative';
     const refusalNow = isRefusalMessage(query);
+    // Отказ, подтверждённый стратегом на прошлом ходе (regex мог промахнуться):
+    // подавляет продажи в этом ответе, счётчик отказов не трогает.
+    const refusalContext = refusalNow || conversationMeta?.lastRefusal === true;
     if (conversationId && refusalNow) {
       const refusals = (conversationMeta?.refusals ?? 0) + 1;
       const cooldown =
@@ -262,14 +267,24 @@ export async function POST(req: Request): Promise<Response> {
       settings,
       {
         negative: negativeNow,
-        refusal: refusalNow,
+        refusal: refusalContext,
         silenced: silencedNow,
         ctaSent: conversationMeta?.ctaSent ?? 0,
         phoneAsked: conversationMeta?.phoneAsked ?? 0,
       },
       { baseTemperature: bot.temperature },
     );
-    const styleBlock = buildStyleBlock(style, correctiveNotes(conversationMeta?.styleFlags));
+    const tactic = pickTactic(settings, {
+      stage: conversationMeta?.stage ?? 'greeting',
+      lastTactic: conversationMeta?.lastTactic ?? null,
+      negative: negativeNow,
+      suppressed: style.ctaPolicy === 'none',
+    });
+    const styleBlock = buildStyleBlock(
+      style,
+      correctiveNotes(conversationMeta?.styleFlags),
+      tactic ? tactic.line : null,
+    );
 
     // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
     if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
@@ -596,7 +611,17 @@ export async function POST(req: Request): Promise<Response> {
           await updateConversationFields(conversationId, {
             ...(sentCta ? { cta_sent: (conversationMeta?.ctaSent ?? 0) + 1 } : {}),
             ...(askedContact ? { phone_asked: (conversationMeta?.phoneAsked ?? 0) + 1 } : {}),
+            last_tactic: tactic?.id ?? null,
             style_flags: { flags: styleFlags, at: new Date().toISOString() },
+          });
+        }
+        if (tactic) {
+          await recordEvent({
+            botId: bot.id,
+            visitorId,
+            conversationId,
+            type: 'tactic_used',
+            payload: { tactic: tactic.id, stage: conversationMeta?.stage ?? 'greeting' },
           });
         }
         if (styleFlags.length > 0) {

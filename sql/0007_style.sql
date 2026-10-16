@@ -15,6 +15,11 @@ alter table conversations add column if not exists phone_asked int not null defa
 alter table conversations add column if not exists refusals int not null default 0;
 alter table conversations add column if not exists silenced_until timestamptz;
 alter table conversations add column if not exists style_flags jsonb not null default '{}'::jsonb;
+-- Стратег 2.0: вердикт по тону/отказу на прошлом ходе (уточняет regex-детекторы)
+-- и последняя применённая тактика ответа (ротация, чтобы не повторяться).
+alter table conversations add column if not exists last_sentiment text;
+alter table conversations add column if not exists last_refusal boolean not null default false;
+alter table conversations add column if not exists last_tactic text;
 
 comment on column conversations.cta_sent is
   'Ответы с предложением следующего шага (CTA). Бюджет ведёт сервер, не модель.';
@@ -25,4 +30,5 @@ comment on column conversations.silenced_until is
 select 'sitebot schema v7 installed' as result,
        (select count(*) from information_schema.columns
          where table_name = 'conversations'
-           and column_name in ('cta_sent', 'phone_asked', 'refusals', 'silenced_until', 'style_flags')) as style_columns;
+           and column_name in ('cta_sent', 'phone_asked', 'refusals', 'silenced_until', 'style_flags',
+                               'last_sentiment', 'last_refusal', 'last_tactic')) as style_columns;
