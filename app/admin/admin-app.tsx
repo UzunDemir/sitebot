@@ -1327,9 +1327,19 @@ function BotSettings({
 
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-xs font-medium text-slate-500">
-            Индикатор «печатает» (три точки): размер, прыжок и скорость. Цвет — в «Тонкой настройке
-            цветов» выше.
+            Индикатор «печатает»: слово перед бегущими точками, размер, прыжок и скорость. Цвет —
+            в «Тонкой настройке цветов» выше.
           </p>
+          <label className="mt-2 block space-y-1 text-xs text-slate-500">
+            Слово перед точками (например, Печатает или writing)
+            <input
+              value={theme.typingLabel ?? ''}
+              onChange={(e) => setThemeField('typingLabel', e.target.value || undefined)}
+              placeholder="Печатает"
+              maxLength={24}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+            />
+          </label>
           <div className="mt-2 grid gap-3 sm:grid-cols-3">
             <label className="space-y-1 text-xs text-slate-500">
               Размер точки, px (3–10)
