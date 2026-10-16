@@ -1327,8 +1327,8 @@ function BotSettings({
 
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-xs font-medium text-slate-500">
-            Индикатор «печатает»: слово, анимация точек (прыжок или бег слева направо), размер,
-            прыжок и скорость. Цвет — в «Тонкой настройке цветов» выше.
+            Индикатор «печатает»: слово, анимация точек (прыжок или волна слева направо, как в
+            Viber), размер, прыжок и скорость. Цвет — в «Тонкой настройке цветов» выше.
           </p>
           <label className="mt-2 block space-y-1 text-xs text-slate-500">
             Слово перед точками (например, Печатает или writing)
@@ -1348,7 +1348,7 @@ function BotSettings({
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
             >
               <option value="jump">Прыжок (вверх-вниз)</option>
-              <option value="run">Бег слева направо</option>
+              <option value="run">Волна слева направо (как в Viber)</option>
             </select>
           </label>
           <div className="mt-2 grid gap-3 sm:grid-cols-3">

@@ -112,21 +112,16 @@ body {
   }
 }
 
-/* Вариант «бег слева направо»: точка едет вправо на один шаг и гаснет на краю. */
-@keyframes sitebot-dot-run {
-  0% {
-    transform: translateX(0);
-    opacity: 0;
+/* Вариант «как в Viber»: точки стоят на месте и мягко вспыхивают по очереди
+   слева направо — волна без прыжков. */
+@keyframes sitebot-dot-wave {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scale(0.8);
   }
-  25% {
+  30% {
     opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(var(--sitebot-dot-run, 9px));
-    opacity: 0;
+    transform: scale(1);
   }
 }
 

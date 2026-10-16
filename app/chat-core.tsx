@@ -125,11 +125,10 @@ function TypingDots({
   jump: number;
   speed: number;
   label: string;
-  /** jump — прыгают вверх-вниз; run — бегут слева направо. */
+  /** jump — прыгают вверх-вниз; run — волна слева направо (как в Viber). */
   mode: 'jump' | 'run';
 }) {
   const stagger = Math.max(60, Math.round(speed / 6));
-  const runStep = size + 4;
   return (
     <span className="inline-flex items-center gap-2" role="status" aria-label="Бот печатает">
       {label ? (
@@ -152,9 +151,10 @@ function TypingDots({
                     width: size,
                     height: size,
                     backgroundColor: color,
-                    animation: `sitebot-dot-run ${speed}ms linear infinite`,
-                    animationDelay: `${-Math.round((speed / 3) * index)}ms`,
-                    ...({ '--sitebot-dot-run': `${runStep}px` } as CSSProperties),
+                    // Как в Viber: волна слева направо — точки по очереди
+                    // вспыхивают, оставаясь на месте.
+                    animation: `sitebot-dot-wave ${speed}ms ease-in-out infinite`,
+                    animationDelay: `${index * Math.round(speed / 3)}ms`,
                   }
                 : {
                     width: size,

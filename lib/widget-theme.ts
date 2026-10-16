@@ -71,7 +71,7 @@ export type WidgetTheme = {
   dark?: boolean;
   /** Слово перед точками «бот печатает» (до 24 символов; пусто = «Печатает»). */
   typingLabel?: string;
-  /** Анимация точек: jump — прыгают, run — бегут слева направо. */
+  /** Анимация точек: jump — прыгают; run — волна слева направо (как в Viber). */
   typingDotsMode?: 'jump' | 'run';
   /** Точки «бот печатает»: размер точки, px (3..10). */
   typingDotsSize?: number;
