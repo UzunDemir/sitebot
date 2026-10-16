@@ -57,8 +57,6 @@ import {
   styleText,
   styleTextStream,
 } from '@/lib/style';
-import { appendQuestionTail, pickFiller, sanitizeFillerText } from '@/lib/fillers';
-import { loadBotFillers } from '@/lib/filler-store';
 import { pickTactic } from '@/lib/tactics';
 import { getActiveSince, softResetVisitor } from '@/lib/memory-window';
 import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '@/lib/clock';
@@ -287,39 +285,6 @@ export async function POST(req: Request): Promise<Response> {
       correctiveNotes(conversationMeta?.styleFlags),
       tactic ? tactic.line : null,
     );
-
-    // --- каскад ответа: быстрые реплики из подготовленного набора (sql/0008).
-    // Тексты утверждены заранее; модель их не видит, в историю они не идут —
-    // медленным может быть только основной ответ.
-    const fastAckEnabled = settings.fastAck !== false;
-    const slowNoticeEnabled = settings.slowNotice !== false;
-    const slowNoticeAfterMs =
-      typeof settings.slowNoticeAfterMs === 'number' ? settings.slowNoticeAfterMs : 6000;
-    const recentFillers = Array.isArray(conversationMeta?.lastFillers) ? conversationMeta.lastFillers : [];
-    const fillerRows = fastAckEnabled || slowNoticeEnabled ? await loadBotFillers(bot.id) : [];
-    const ackPick = fastAckEnabled
-      ? pickFiller({
-          question: query,
-          kind: 'ack',
-          negative: negativeNow,
-          fillers: fillerRows,
-          recentlyUsed: recentFillers,
-        })
-      : null;
-    const ackText = ackPick
-      ? sanitizeFillerText(
-          settings.fastAckTail !== false ? appendQuestionTail(ackPick.text, query) : ackPick.text,
-        )
-      : null;
-    const slowPick = slowNoticeEnabled
-      ? pickFiller({
-          question: query,
-          kind: 'slow',
-          negative: negativeNow,
-          fillers: fillerRows,
-          recentlyUsed: recentFillers,
-        })
-      : null;
 
     // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
     if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
@@ -577,22 +542,6 @@ export async function POST(req: Request): Promise<Response> {
 
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
-        // Каскад: мгновенный отклик отдельным пузырём — до обращения к базе
-        // знаний и модели. Маркер data-segment открывает пузырь ответа.
-        if (ackText && ackPick) {
-          writer.write({ type: 'text-start', id: 'fast-ack' });
-          writer.write({ type: 'text-delta', id: 'fast-ack', delta: ackText });
-          writer.write({ type: 'text-end', id: 'fast-ack' });
-          writer.write({ type: 'data-segment', id: 'segment-ack', data: { reason: 'fast-ack' } });
-          recordEvent({
-            botId: bot.id,
-            visitorId,
-            conversationId,
-            type: 'fast_ack',
-            payload: { source: ackPick.source, category: ackPick.category },
-          }).catch(() => {});
-        }
-
         if (showSources) {
           writer.write({
             type: 'data-sources',
@@ -608,53 +557,7 @@ export async function POST(req: Request): Promise<Response> {
           });
         }
 
-        // Стрим модели вручную: пока не пришёл первый текстовый чанк, следим
-        // за порогом «долгого поиска» — при опоздании отправляем вторую
-        // реплику из набора отдельным пузырём (маркер data-segment).
-        const modelStream = toUIMessageStream({ stream: styleTextStream(result.stream, style) });
-        const reader = modelStream.getReader();
-        let firstTextSeen = false;
-        let slowSentText: string | null = null;
-        const slowTimer =
-          slowNoticeEnabled && slowPick
-            ? setTimeout(() => {
-                if (firstTextSeen) return;
-                const slowText = sanitizeFillerText(slowPick.text);
-                try {
-                  writer.write({ type: 'text-start', id: 'slow-notice' });
-                  writer.write({ type: 'text-delta', id: 'slow-notice', delta: slowText });
-                  writer.write({ type: 'text-end', id: 'slow-notice' });
-                  writer.write({
-                    type: 'data-segment',
-                    id: 'segment-slow',
-                    data: { reason: 'slow-notice' },
-                  });
-                } catch {
-                  // клиент отключился — реплика не нужна
-                }
-                slowSentText = slowText;
-                recordEvent({
-                  botId: bot.id,
-                  visitorId,
-                  conversationId,
-                  type: 'slow_notice',
-                  payload: { source: slowPick.source, category: slowPick.category },
-                }).catch(() => {});
-              }, slowNoticeAfterMs)
-            : null;
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (!firstTextSeen && value && (value as { type?: string }).type === 'text-delta') {
-              firstTextSeen = true;
-              if (slowTimer) clearTimeout(slowTimer);
-            }
-            writer.write(value);
-          }
-        } finally {
-          if (slowTimer) clearTimeout(slowTimer);
-        }
+        await writer.merge(toUIMessageStream({ stream: styleTextStream(result.stream, style) }));
 
         // After the stream completes: persist the answer and hand the
         // client the stored message id so it can send feedback.
@@ -709,17 +612,6 @@ export async function POST(req: Request): Promise<Response> {
             ...(sentCta ? { cta_sent: (conversationMeta?.ctaSent ?? 0) + 1 } : {}),
             ...(askedContact ? { phone_asked: (conversationMeta?.phoneAsked ?? 0) + 1 } : {}),
             last_tactic: tactic?.id ?? null,
-            ...(ackText || slowSentText
-              ? {
-                  last_fillers: [
-                    ...recentFillers,
-                    ...(ackPick ? [ackPick.text] : []),
-                    ...(slowSentText ? [slowSentText] : []),
-                  ]
-                    .filter(Boolean)
-                    .slice(-6),
-                }
-              : {}),
             style_flags: { flags: styleFlags, at: new Date().toISOString() },
           });
         }

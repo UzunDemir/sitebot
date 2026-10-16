@@ -65,23 +65,6 @@ function feedbackFromParts(parts: unknown[]): FeedbackInfo | null {
   return part?.data ?? null;
 }
 
-/**
- * Пузыри ответа: сервер режет каскад маркером data-segment — отклик приходит
- * первым пузырём, ответ модели следует своим. Без маркеров — один пузырь.
- */
-function splitBubbles(parts: unknown[]): string[] {
-  const bubbles: string[] = [''];
-  for (const part of parts) {
-    const typed = part as { type?: string; text?: string };
-    if (typed.type === 'text') {
-      bubbles[bubbles.length - 1] += typed.text ?? '';
-    } else if (typed.type === 'data-segment') {
-      bubbles.push('');
-    }
-  }
-  return bubbles;
-}
-
 function proactiveFromParts(parts: unknown[]): boolean {
   return parts.some((part) => (part as { type: string }).type === 'data-proactive');
 }
@@ -839,10 +822,10 @@ export function Chat({
           const feedback = feedbackFromParts(message.parts);
           const proactive = proactiveFromParts(message.parts);
           const isLastMessage = message.id === messages[messages.length - 1]?.id;
-          // Каскад режет ответ на пузыри маркером data-segment (отклик, затем
-          // ответ). Точки «печатает» бегут в последнем пустом пузыре.
-          const bubbles = splitBubbles(message.parts);
-          const lastBubbleIndex = bubbles.length - 1;
+          // Ответ пишется прямо на месте точек: пока текста нет, точки бегут
+          // в ЭТОМ пузыре, с первым токеном текст заменяет их.
+          const showDotsHere =
+            (status === 'submitted' || status === 'streaming') && text === '' && isLastMessage;
 
           if (message.role === 'user') {
             return (
@@ -870,40 +853,28 @@ export function Chat({
                     Бот написал сам
                   </span>
                 )}
-                {bubbles.map((bubble, index) => {
-                  const isLastBubble = index === lastBubbleIndex;
-                  const waitingHere =
-                    isLastBubble &&
-                    bubble === '' &&
-                    (status === 'submitted' || status === 'streaming') &&
-                    isLastMessage;
-                  if (bubble === '' && !waitingHere) return null;
-                  return (
-                    <div
-                      key={index}
-                      className="px-4 py-3 text-sm whitespace-pre-wrap"
-                      style={{
-                        backgroundColor: p.botBubbleBg,
-                        color: p.botBubbleText,
-                        borderRadius: bubbleRadius,
-                        borderBottomLeftRadius: 6,
-                      }}
-                    >
-                      {waitingHere ? (
-                        <TypingDots
-                          color={p.typingDots}
-                          size={dotsSize}
-                          jump={dotsJump}
-                          speed={dotsSpeed}
-                          label={dotsLabel}
-                          mode={dotsMode}
-                        />
-                      ) : (
-                        bubble
-                      )}
-                    </div>
-                  );
-                })}
+                <div
+                  className="px-4 py-3 text-sm whitespace-pre-wrap"
+                  style={{
+                    backgroundColor: p.botBubbleBg,
+                    color: p.botBubbleText,
+                    borderRadius: bubbleRadius,
+                    borderBottomLeftRadius: 6,
+                  }}
+                >
+                  {showDotsHere ? (
+                    <TypingDots
+                      color={p.typingDots}
+                      size={dotsSize}
+                      jump={dotsJump}
+                      speed={dotsSpeed}
+                      label={dotsLabel}
+                      mode={dotsMode}
+                    />
+                  ) : (
+                    text
+                  )}
+                </div>
                 {sources.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {sources.map((s) => (
