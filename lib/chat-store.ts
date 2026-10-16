@@ -229,6 +229,8 @@ export type ConversationMeta = {
   lastSentiment: 'positive' | 'neutral' | 'negative' | null;
   lastRefusal: boolean;
   lastTactic: string | null;
+  /** Быстрые реплики каскада, уже показанные в беседе (ротация, sql/0008). */
+  lastFillers: string[];
 };
 
 function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
@@ -254,11 +256,14 @@ function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
         : null,
     lastRefusal: row.last_refusal === true,
     lastTactic: typeof row.last_tactic === 'string' ? row.last_tactic : null,
+    lastFillers: Array.isArray(row.last_fillers)
+      ? (row.last_fillers as unknown[]).filter((item): item is string => typeof item === 'string')
+      : [],
   };
 }
 
 const CONVERSATION_META_COLUMNS =
-  'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id, cta_sent, phone_asked, refusals, silenced_until, style_flags, last_sentiment, last_refusal, last_tactic';
+  'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id, cta_sent, phone_asked, refusals, silenced_until, style_flags, last_sentiment, last_refusal, last_tactic, last_fillers';
 /** sql/0003 без 0007: стиль-колонок ещё нет. */
 const CONVERSATION_META_NO_STYLE = 'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id';
 const CONVERSATION_META_LEGACY = 'id, bot_id';
@@ -345,6 +350,7 @@ export type ConversationPatch = {
   last_sentiment?: string | null;
   last_refusal?: boolean;
   last_tactic?: string | null;
+  last_fillers?: string[];
 };
 
 /** Best-effort conversation update; degrades on the pre-0003 schema. */

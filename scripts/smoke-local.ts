@@ -54,6 +54,7 @@ import {
   sanitizeNudgeText,
 } from '../lib/nudge';
 import { isForgetRequest } from '../lib/forget';
+import { appendQuestionTail, categorizeQuestion, pickFiller, SEED_FILLERS } from '../lib/fillers';
 import {
   hasContactAsk,
   hasCta,
@@ -447,6 +448,53 @@ function main(): void {
       console.log('  ✓ виджет: тема точек «печатает» (цвет, размер, прыжок, скорость)');
     } else {
       console.error(`❌ виджет: тема точек — ${JSON.stringify({ wt, wtClamp })}`);
+      failures += 1;
+    }
+
+    // --- быстрые реплики (каскад): категории, тон, ротация, фолбэк, хвост
+    const fillerSeedRows = SEED_FILLERS.map((seed, index) => ({ id: `s${index}`, enabled: true, ...seed }));
+    const catsOk =
+      categorizeQuestion('Когда придёт моя посылка?') === 'delivery' &&
+      categorizeQuestion('Можно оплатить картой?') === 'payment' &&
+      categorizeQuestion('Хочу вернуть товар') === 'return' &&
+      categorizeQuestion('Есть ли размер 50?') === 'availability' &&
+      categorizeQuestion('Гарантия есть?') === 'warranty' &&
+      categorizeQuestion('Привет!') === 'generic';
+    const ackPick = pickFiller({
+      question: 'Когда придёт посылка?',
+      kind: 'ack',
+      negative: false,
+      fillers: fillerSeedRows,
+    });
+    const ackNeg = pickFiller({
+      question: 'Посылка задерживается, уже второй раз!',
+      kind: 'ack',
+      negative: true,
+      fillers: fillerSeedRows,
+    });
+    const ackRot = pickFiller({
+      question: 'Когда придёт посылка?',
+      kind: 'ack',
+      negative: false,
+      fillers: fillerSeedRows,
+      recentlyUsed: [ackPick.text],
+    });
+    const ackEmpty = pickFiller({ question: 'вопрос', kind: 'ack', negative: false, fillers: [] });
+    const tail = appendQuestionTail('Секунду.', 'Когда придёт моя посылка в Казань?');
+    if (
+      catsOk &&
+      ackPick.source === 'kb' &&
+      /доставк/i.test(ackPick.text) &&
+      /понимаю/i.test(ackNeg.text) &&
+      ackRot.text !== ackPick.text &&
+      ackEmpty.source === 'fallback' &&
+      tail === 'Секунду. По вашему вопросу: «Когда придёт моя посылка в Казань?».'
+    ) {
+      console.log('  ✓ быстрые реплики: категории, эмпатийный тон, ротация, фолбэк, хвост');
+    } else {
+      console.error(
+        `❌ быстрые реплики: cats=${catsOk} pick=${ackPick.text} neg=${ackNeg.text} rot=${ackRot.text} empty=${ackEmpty.text} tail=${tail}`,
+      );
       failures += 1;
     }
 

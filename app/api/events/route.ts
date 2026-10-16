@@ -25,6 +25,8 @@ const EVENT_TYPES = new Set([
   'refusal',
   'style_flags',
   'tactic_used',
+  'fast_ack',
+  'slow_notice',
 ]);
 
 const MAX_PAYLOAD = 2000;
