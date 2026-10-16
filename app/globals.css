@@ -70,6 +70,7 @@ body {
 .dark-admin .text-emerald-700 { color: #8fe0b0; }
 .dark-admin .text-red-600 { color: #f08d8d; }
 .dark-admin .text-red-700 { color: #f4a0a0; }
+.dark-admin .text-indigo-600 { color: #93a5f7; }
 
 /* borders + dividers */
 .dark-admin .border-slate-100 { border-color: #1b2330; }
@@ -79,7 +80,15 @@ body {
 .dark-admin .border-amber-200 { border-color: #4a3c1f; }
 .dark-admin .border-emerald-200 { border-color: #23503a; }
 .dark-admin .border-red-200 { border-color: #4f2729; }
-.dark-admin .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1b2330; }
+/* Tailwind v4: divide-y рисует border-bottom на всех, кроме :last-child
+   (селектор в :where, нулевая специфичность). Плюс legacy v3-форма — на случай
+   откатов. Обе строки нужны: без первой первая строка таблицы сохраняла
+   светло-серый slate-100 и в тёмной теме выглядела белой линией. */
+.dark-admin .divide-slate-100 > :not(:last-child),
+.dark-admin .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1b2330;
+  border-bottom-color: #1b2330;
+}
 
 /* поля ввода */
 .dark-admin :where(input, textarea, select) {
