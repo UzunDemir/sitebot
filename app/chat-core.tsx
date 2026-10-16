@@ -130,9 +130,13 @@ function TypingDots({
 }) {
   const stagger = Math.max(60, Math.round(speed / 6));
   return (
-    <span className="inline-flex items-center gap-2" role="status" aria-label="Бот печатает">
+    <span className="inline-flex items-end gap-2" role="status" aria-label="Бот печатает">
       {label ? (
-        <span style={{ color }}>{label}</span>
+        // leading-none — низ строки прижат к буквам, точки встают ровно
+        // по нижнему краю текста.
+        <span className="leading-none" style={{ color }}>
+          {label}
+        </span>
       ) : null}
       <span
         className="inline-flex items-end gap-1"
