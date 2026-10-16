@@ -558,13 +558,17 @@
     var startTop = 0;
     var moved = false;
     var touchInput = false;
+    var lastTouchAt = 0;
 
     function onMove(e) {
       if (!state.dragging) return;
       var p = e.touches ? e.touches[0] : e;
       var dx = p.clientX - startX;
       var dy = p.clientY - startY;
-      if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+      // Порог для пальца больше: лёгкое смещение при касании — это тап,
+      // а не перетаскивание (с 4 px кнопка «не нажималась» на телефоне).
+      var threshold = touchInput ? 12 : 4;
+      if (Math.abs(dx) + Math.abs(dy) > threshold) moved = true;
       var np = clampPos({ left: startLeft + dx, top: startTop + dy });
       sessionPos = np;
       launcher.style.left = np.left + 'px';
@@ -595,24 +599,35 @@
       }
       if (frameWrap) applyFrame();
       if (moved) {
+        // Перетащили: синтетический click после касания приходит позже —
+        // окно побольше, чтобы виджет не «открылся» случайно после драга.
         state.suppressClick = true;
         window.setTimeout(function () {
           state.suppressClick = false;
-        }, 120);
+        }, touchInput ? 500 : 120);
       } else if (touchInput) {
+        // Тап по кнопке: открываем/закрываем здесь же и гасим синтетический
+        // click (и совместимостные mouse-события после касания).
         state.suppressClick = true;
         window.setTimeout(function () {
           state.suppressClick = false;
-        }, 400);
+        }, 500);
         toggle();
       }
     }
 
     function onDown(e) {
       if (e.button !== undefined && e.button !== 0) return;
+      var isTouch = Boolean(e.touches);
+      var now = Date.now();
+      // После касания браузер шлёт совместимостные mouse-события — не даём
+      // им заново заводить перетаскивание (из-за этого тап на телефоне
+      // иногда «проглатывался»).
+      if (!isTouch && now - lastTouchAt < 800) return;
+      if (isTouch) lastTouchAt = now;
       state.dragging = true;
       moved = false;
-      touchInput = Boolean(e.touches);
+      touchInput = isTouch;
       var p = e.touches ? e.touches[0] : e;
       startX = p.clientX;
       startY = p.clientY;
