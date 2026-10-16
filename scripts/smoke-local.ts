@@ -54,7 +54,7 @@ import {
   sanitizeNudgeText,
 } from '../lib/nudge';
 import { isForgetRequest } from '../lib/forget';
-import { appendQuestionTail, categorizeQuestion, pickFiller, SEED_FILLERS } from '../lib/fillers';
+import { categorizeQuestion, pickFiller, SEED_FILLERS } from '../lib/fillers';
 import {
   hasContactAsk,
   hasCta,
@@ -480,7 +480,13 @@ function main(): void {
       recentlyUsed: [ackPick.text],
     });
     const ackEmpty = pickFiller({ question: 'вопрос', kind: 'ack', negative: false, fillers: [] });
-    const tail = appendQuestionTail('Секунду.', 'Когда придёт моя посылка в Казань?');
+    const ackEmpty2 = pickFiller({
+      question: 'вопрос',
+      kind: 'ack',
+      negative: false,
+      fillers: [],
+      recentlyUsed: [ackEmpty.text],
+    });
     if (
       catsOk &&
       ackPick.source === 'kb' &&
@@ -488,12 +494,12 @@ function main(): void {
       /понимаю/i.test(ackNeg.text) &&
       ackRot.text !== ackPick.text &&
       ackEmpty.source === 'fallback' &&
-      tail === 'Секунду. По вашему вопросу: «Когда придёт моя посылка в Казань?».'
+      ackEmpty2.text !== ackEmpty.text
     ) {
-      console.log('  ✓ быстрые реплики: категории, эмпатийный тон, ротация, фолбэк, хвост');
+      console.log('  ✓ быстрые реплики: категории, эмпатийный тон, ротация (включая фолбэк)');
     } else {
       console.error(
-        `❌ быстрые реплики: cats=${catsOk} pick=${ackPick.text} neg=${ackNeg.text} rot=${ackRot.text} empty=${ackEmpty.text} tail=${tail}`,
+        `❌ быстрые реплики: cats=${catsOk} pick=${ackPick.text} neg=${ackNeg.text} rot=${ackRot.text} empty=${ackEmpty.text}/${ackEmpty2.text}`,
       );
       failures += 1;
     }

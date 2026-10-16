@@ -116,10 +116,15 @@ export const SEED_FILLERS: Array<Omit<FillerRow, 'id' | 'enabled'>> = [
   },
 ];
 
-/** Встроенный фолбэк, если набора нет (миграция не применена или пусто). */
-export const FALLBACK_FILLERS: Record<FillerKind, string> = {
-  ack: 'Секунду, уточняю по базе.',
-  slow: 'Тема объёмная — поднимаю детали, ещё пара секунд.',
+/** Встроенный фолбэк, если набора нет (миграция не применена или пусто).
+ *  Ротируется, чтобы отклик не повторялся слово в слово. */
+export const FALLBACK_FILLER_VARIANTS: Record<FillerKind, string[]> = {
+  ack: ['Секунду, уточняю по базе.', 'Минуту — уже смотрю по базе.', 'Секунду, проверяю детали.'],
+  slow: [
+    'Тема объёмная — поднимаю детали, ещё пара секунд.',
+    'Почти готово — ещё несколько секунд.',
+    'Нужна пара секунд, чтобы всё уточнить.',
+  ],
 };
 
 /** Пул кандидатов: категория+тон → категория+нейтральный → общие. */
@@ -169,20 +174,20 @@ export function pickFiller(input: {
   const tone: FillerTone = input.negative ? 'empathetic' : 'neutral';
   const pool = candidates(input.fillers, input.kind, tone, category);
   if (pool.length === 0) {
-    return { text: FALLBACK_FILLERS[input.kind], kind: input.kind, category, source: 'fallback' };
+    const variants = FALLBACK_FILLER_VARIANTS[input.kind];
+    const recent = new Set(input.recentlyUsed ?? []);
+    const fresh = variants.filter((variant) => !recent.has(variant));
+    return {
+      text: (fresh.length > 0 ? fresh : variants)[0],
+      kind: input.kind,
+      category,
+      source: 'fallback',
+    };
   }
   const recent = new Set(input.recentlyUsed ?? []);
   const fresh = pool.filter((row) => !recent.has(row.text));
   const chosen = (fresh.length > 0 ? fresh : pool)[0];
   return { text: chosen.text, kind: input.kind, category, source: 'kb' };
-}
-
-/** Хвост с фрагментом вопроса: «… По вашему вопросу: «…».» (опционально). */
-export function appendQuestionTail(text: string, question: string): string {
-  const snippet = question.replace(/\s+/g, ' ').replace(/[«»"]/g, '').trim();
-  if (!snippet) return text;
-  const cut = snippet.length > 60 ? `${snippet.slice(0, 57).replace(/\s+\S*$/, '')}…` : snippet;
-  return `${text} По вашему вопросу: «${cut}».`;
 }
 
 /** Санитайз текста реплики: одна строка, лимит длины. */

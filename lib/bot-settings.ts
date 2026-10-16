@@ -78,8 +78,6 @@ export type BotSettings = {
   empathy?: number;
   /** Каскад ответа (sql/0008): мгновенный отклик и реплика «долгий поиск». */
   fastAck?: boolean;
-  /** Добавлять фрагмент вопроса в отклик («По вашему вопросу: «…».»). */
-  fastAckTail?: boolean;
   slowNotice?: boolean;
   /** Порог второго пузыря, мс (2000..15000). */
   slowNoticeAfterMs?: number;
@@ -106,9 +104,8 @@ export const BOT_SETTINGS_DEFAULTS = {
   wit: 30,
   empathy: 50,
   fastAck: true,
-  fastAckTail: true,
   slowNotice: true,
-  slowNoticeAfterMs: 6000,
+  slowNoticeAfterMs: 4000,
   packs: [] as string[],
   customKnowledge: '',
   proactive: {
@@ -187,7 +184,6 @@ export function parseBotSettings(input: unknown): BotSettings {
     out.customKnowledge = raw.customKnowledge.trim().slice(0, 2000);
   }
   if (typeof raw.fastAck === 'boolean') out.fastAck = raw.fastAck;
-  if (typeof raw.fastAckTail === 'boolean') out.fastAckTail = raw.fastAckTail;
   if (typeof raw.slowNotice === 'boolean') out.slowNotice = raw.slowNotice;
   out.slowNoticeAfterMs = intInRange(raw.slowNoticeAfterMs, 2000, 15000);
 

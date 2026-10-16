@@ -57,7 +57,7 @@ import {
   styleText,
   styleTextStream,
 } from '@/lib/style';
-import { appendQuestionTail, pickFiller, sanitizeFillerText } from '@/lib/fillers';
+import { pickFiller, sanitizeFillerText } from '@/lib/fillers';
 import { loadBotFillers } from '@/lib/filler-store';
 import { pickTactic } from '@/lib/tactics';
 import { getActiveSince, softResetVisitor } from '@/lib/memory-window';
@@ -294,7 +294,7 @@ export async function POST(req: Request): Promise<Response> {
     const fastAckEnabled = settings.fastAck !== false;
     const slowNoticeEnabled = settings.slowNotice !== false;
     const slowNoticeAfterMs =
-      typeof settings.slowNoticeAfterMs === 'number' ? settings.slowNoticeAfterMs : 6000;
+      typeof settings.slowNoticeAfterMs === 'number' ? settings.slowNoticeAfterMs : 4000;
     const recentFillers = Array.isArray(conversationMeta?.lastFillers) ? conversationMeta.lastFillers : [];
     const fillerRows = fastAckEnabled || slowNoticeEnabled ? await loadBotFillers(bot.id) : [];
     const ackPick = fastAckEnabled
@@ -306,11 +306,7 @@ export async function POST(req: Request): Promise<Response> {
           recentlyUsed: recentFillers,
         })
       : null;
-    const ackText = ackPick
-      ? sanitizeFillerText(
-          settings.fastAckTail !== false ? appendQuestionTail(ackPick.text, query) : ackPick.text,
-        )
-      : null;
+    const ackText = ackPick ? sanitizeFillerText(ackPick.text) : null;
     const slowPick = slowNoticeEnabled
       ? pickFiller({
           question: query,
@@ -320,6 +316,11 @@ export async function POST(req: Request): Promise<Response> {
           recentlyUsed: recentFillers,
         })
       : null;
+    // Первый пузырь уже отправлен: модель не здоровается заново и не
+    // представляется — сразу отвечает по сути.
+    const styleBlockWithAck = ackText
+      ? `${styleBlock}\n- Клиент уже получил короткий отклик «${ackText}» — не здоровайся заново и не представляйся, сразу отвечай по сути.`
+      : styleBlock;
 
     // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
     if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
@@ -532,7 +533,14 @@ export async function POST(req: Request): Promise<Response> {
           purchases: purchasesSummary,
         }
       : undefined;
-    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory, nowInfo.text, styleBlock);
+    const system = buildSystemPrompt(
+      bot.system_prompt ?? '',
+      sources,
+      settings,
+      memory,
+      nowInfo.text,
+      styleBlockWithAck,
+    );
     const showSources = settings.showSources !== false;
 
     // --- model context: dialog memory lives in the DB, not in the UI. The
