@@ -38,6 +38,7 @@ body {
   border-radius: 0 !important;
 }
 
+.dark-admin,
 .dark-admin .admin-shell {
   background: #0b0f14;
 }

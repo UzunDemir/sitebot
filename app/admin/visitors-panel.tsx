@@ -38,6 +38,9 @@ type VisitorListItem = {
   firstSeen: string;
   lastSeen: string;
   conversationsCount: number;
+  /** Структурированные факты (sql/0006) и эпохи «забывания» (sql/0005). */
+  factsCount: number;
+  epochsCount: number;
   /** «05.03» / «05.03.1990» (sql/0004). */
   birthday: string | null;
   preferences: string[];
@@ -384,84 +387,113 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900">Посетители</h2>
-        <button
-          type="button"
-          onClick={() => void loadList()}
-          className="text-xs text-slate-400 hover:text-slate-600"
-        >
-          {listBusy ? 'обновляю…' : 'обновить'}
-        </button>
-      </div>
-
-      {!available && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          Карточки посетителей ещё не включены: выполните{' '}
-          <code className="rounded bg-amber-100 px-1">sql/0003_seller.sql</code> в Supabase SQL Editor
-          и обновите страницу.
+    <div className="flex h-full min-h-0 gap-3">
+      {/* Главная таблица: посетители */}
+      <section className="flex h-full min-h-0 flex-1 flex-col border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
+          <h2 className="text-sm font-semibold text-slate-900">Посетители</h2>
+          <span className="text-[11px] text-slate-400">
+            {listBusy ? 'обновляю…' : `показано: ${filtered.length} из ${visitors.length}`}
+          </span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск: имя, телефон, заметка…"
+            className="ml-auto w-64 border border-slate-300 px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-indigo-500"
+          />
+          <button
+            type="button"
+            onClick={() => void loadList()}
+            className="border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            Обновить
+          </button>
         </div>
-      )}
 
-      {available && visitors.length === 0 && (
-        <p className="text-xs text-slate-400">
-          Пока пусто. Карточка появится, как только посетитель напишет боту: имя, контакты и
-          заметки собираются автоматически, а заметки и теги можно править здесь.
-        </p>
-      )}
-
-      {available && visitors.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-          <div className="space-y-2">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Поиск: имя, телефон, заметка…"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-500"
-            />
-            <ul className="max-h-[560px] space-y-1 overflow-y-auto pr-1">
-              {filtered.map((visitor) => (
-                <li key={visitor.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(visitor.id)}
-                    className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
-                      visitor.id === selectedId
-                        ? 'border-indigo-200 bg-indigo-50'
-                        : 'border-slate-100 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-xs font-medium text-slate-800">
-                        {visitor.name ?? 'Аноним'}
-                      </span>
-                      {visitor.doNotDisturb && (
-                        <span className="rounded-full border border-slate-200 px-1.5 py-0.5 text-[9px] text-slate-400">
-                          DND
-                        </span>
-                      )}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[10px] text-slate-400">
-                      {contactHint(visitor.contacts) ?? 'контактов нет'} · диалогов:{' '}
-                      {visitor.conversationsCount} · {formatDate(visitor.lastSeen)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-              {filtered.length === 0 && (
-                <li className="px-3 py-2 text-[11px] text-slate-400">Ничего не найдено.</li>
-              )}
-            </ul>
+        {!available && (
+          <div className="m-3 border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            Карточки посетителей ещё не включены: выполните{' '}
+            <code className="bg-amber-100 px-1">sql/0003_seller.sql</code> в Supabase SQL Editor и обновите
+            страницу.
           </div>
+        )}
 
-          <div className="min-w-0">
+        {available && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="w-full text-[11px]">
+              <thead className="sticky top-0 bg-slate-50 text-left text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 font-normal">Имя</th>
+                  <th className="px-3 py-2 font-normal">Телефон</th>
+                  <th className="px-3 py-2 font-normal">ID</th>
+                  <th className="px-3 py-2 font-normal">Память</th>
+                  <th className="px-3 py-2 font-normal">Факты</th>
+                  <th className="px-3 py-2 font-normal">Эпохи</th>
+                  <th className="px-3 py-2 font-normal">Диалоги</th>
+                  <th className="px-3 py-2 font-normal">DND</th>
+                  <th className="px-3 py-2 font-normal">Последний визит</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map((visitor) => (
+                  <tr
+                    key={visitor.id}
+                    onClick={() => setSelectedId(visitor.id)}
+                    className={`cursor-pointer ${
+                      visitor.id === selectedId ? 'bg-indigo-50' : 'hover:bg-slate-50'
+                    }`}
+                    title="Открыть карточку"
+                  >
+                    <td className="px-3 py-2 font-medium text-slate-800">{visitor.name ?? 'Аноним'}</td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {visitor.contacts?.phone ?? contactHint(visitor.contacts) ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400">{visitor.id.slice(0, 8)}</td>
+                    <td className="max-w-[280px] truncate px-3 py-2 text-slate-500">
+                      {visitor.memoryDigest || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500">{visitor.factsCount ?? 0}</td>
+                    <td className="px-3 py-2 text-slate-500">{visitor.epochsCount ?? 0}</td>
+                    <td className="px-3 py-2 text-slate-500">{visitor.conversationsCount}</td>
+                    <td className="px-3 py-2">{visitor.doNotDisturb ? 'да' : '—'}</td>
+                    <td className="px-3 py-2 text-slate-400">{formatDate(visitor.lastSeen)}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-6 text-center text-slate-400">
+                      {visitors.length === 0
+                        ? 'Пока пусто. Карточка появится, как только посетитель напишет боту: имя, контакты и заметки собираются автоматически.'
+                        : 'Ничего не найдено.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Карточка посетителя (выдвижная панель) */}
+      {selectedId && (
+        <aside className="flex h-full min-h-0 w-[460px] shrink-0 flex-col border border-slate-200 bg-white xl:w-[560px]">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
+            <p className="text-sm font-semibold text-slate-900">{detail?.visitor.name ?? 'Карточка'}</p>
+            {detail && <span className="text-[10px] text-slate-400">{detail.visitor.id.slice(0, 8)}</span>}
+            <button
+              type="button"
+              onClick={() => setSelectedId('')}
+              className="ml-auto border border-slate-300 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
+            >
+              ✕ закрыть
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-3">
             {!detail && (
-              <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-400">
-                {detailBusy ? 'Загружаю карточку…' : 'Выберите посетителя слева.'}
+              <p className="border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-400">
+                {detailBusy ? 'Загружаю карточку…' : 'Выберите посетителя.'}
               </p>
             )}
-
             {detail && (
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
@@ -608,18 +640,32 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   {(detail.facts ?? []).length === 0 ? (
                     <p className="mt-2 text-[11px] text-slate-400">Фактов пока нет.</p>
                   ) : (
-                    <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
-                      {(detail.facts ?? []).map((fact) => (
-                        <li key={fact.id} className="flex flex-wrap items-center gap-2 text-[11px]">
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
-                            {FACT_KIND_LABELS[fact.kind] ?? fact.kind}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-slate-700">{fact.value}</span>
-                          {fact.timesSeen > 1 && <span className="text-slate-400">×{fact.timesSeen}</span>}
-                          <span className="text-slate-400">{formatDate(fact.lastSeen)}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="mt-2 max-h-56 overflow-y-auto">
+                      <table className="w-full text-[11px]">
+                        <thead className="text-left text-slate-400">
+                          <tr>
+                            <th className="py-1 font-normal">Тип</th>
+                            <th className="py-1 font-normal">Факт</th>
+                            <th className="py-1 font-normal">×</th>
+                            <th className="py-1 font-normal">Дата</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(detail.facts ?? []).map((fact) => (
+                            <tr key={fact.id}>
+                              <td className="py-1.5 align-top text-slate-500">
+                                {FACT_KIND_LABELS[fact.kind] ?? fact.kind}
+                              </td>
+                              <td className="py-1.5 text-slate-700">{fact.value}</td>
+                              <td className="py-1.5 align-top text-slate-400">
+                                {fact.timesSeen > 1 ? `×${fact.timesSeen}` : '—'}
+                              </td>
+                              <td className="py-1.5 align-top text-slate-400">{formatDate(fact.lastSeen)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
 
@@ -715,31 +761,47 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   {(detail.purchases ?? []).length === 0 ? (
                     <p className="mt-2 text-[11px] text-slate-400">Покупок пока нет.</p>
                   ) : (
-                    <ul className="mt-2 divide-y divide-slate-100">
-                      {(detail.purchases ?? []).map((purchase) => (
-                        <li key={purchase.id} className="flex flex-wrap items-center gap-2 py-2 text-[11px]">
-                          <span className="text-slate-400">{formatDate(purchase.orderedAt)}</span>
-                          <span className="font-medium text-slate-700">{purchase.title}</span>
-                          {purchase.amount !== null && (
-                            <span className="text-slate-500">
-                              {purchase.amount.toLocaleString('ru-RU')}{' '}
-                              {purchase.currency === 'RUB' ? '₽' : purchase.currency}
-                            </span>
-                          )}
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
-                            {PURCHASE_STATUS_LABELS[purchase.status] ?? purchase.status}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void removePurchase(purchase.id)}
-                            disabled={purchaseBusy}
-                            className="ml-auto text-slate-400 hover:text-red-600 disabled:opacity-50"
-                          >
-                            удалить
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <table className="mt-2 w-full text-[11px]">
+                      <thead className="text-left text-slate-400">
+                        <tr>
+                          <th className="py-1 font-normal">Дата</th>
+                          <th className="py-1 font-normal">Товар</th>
+                          <th className="py-1 font-normal">Сумма</th>
+                          <th className="py-1 font-normal">Статус</th>
+                          <th className="py-1 text-right font-normal"> </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(detail.purchases ?? []).map((purchase) => (
+                          <tr key={purchase.id}>
+                            <td className="py-1.5 align-top text-slate-400">
+                              {formatDate(purchase.orderedAt)}
+                            </td>
+                            <td className="py-1.5 align-top font-medium text-slate-700">{purchase.title}</td>
+                            <td className="py-1.5 align-top text-slate-500">
+                              {purchase.amount !== null
+                                ? `${purchase.amount.toLocaleString('ru-RU')} ${
+                                    purchase.currency === 'RUB' ? '₽' : purchase.currency
+                                  }`
+                                : '—'}
+                            </td>
+                            <td className="py-1.5 align-top text-slate-500">
+                              {PURCHASE_STATUS_LABELS[purchase.status] ?? purchase.status}
+                            </td>
+                            <td className="py-1.5 text-right align-top">
+                              <button
+                                type="button"
+                                onClick={() => void removePurchase(purchase.id)}
+                                disabled={purchaseBusy}
+                                className="text-slate-400 hover:text-red-600 disabled:opacity-50"
+                              >
+                                удалить
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                   <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_110px_130px_auto]">
                     <input
@@ -783,23 +845,32 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   {detail.conversations.length === 0 ? (
                     <p className="mt-2 text-[11px] text-slate-400">Бесед пока нет.</p>
                   ) : (
-                    <ul className="mt-2 divide-y divide-slate-100">
-                      {detail.conversations.map((conv) => (
-                        <li key={conv.id} className="flex flex-wrap items-center gap-2 py-2 text-[11px]">
-                          <span className="text-slate-600">{formatDate(conv.lastActiveAt ?? conv.createdAt)}</span>
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
-                            {STAGE_LABELS[conv.stage] ?? conv.stage}
-                          </span>
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
-                            {OUTCOME_LABELS[conv.outcome] ?? conv.outcome}
-                          </span>
-                          <span className="text-slate-400">сообщений: {conv.messageCount}</span>
-                          {conv.nudgesSent > 0 && (
-                            <span className="text-slate-400">касаний: {conv.nudgesSent}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                    <table className="mt-2 w-full text-[11px]">
+                      <thead className="text-left text-slate-400">
+                        <tr>
+                          <th className="py-1 font-normal">Активность</th>
+                          <th className="py-1 font-normal">Стадия</th>
+                          <th className="py-1 font-normal">Исход</th>
+                          <th className="py-1 font-normal">Сообщений</th>
+                          <th className="py-1 font-normal">Касаний</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {detail.conversations.map((conv) => (
+                          <tr key={conv.id}>
+                            <td className="py-1.5 text-slate-600">
+                              {formatDate(conv.lastActiveAt ?? conv.createdAt)}
+                            </td>
+                            <td className="py-1.5 text-slate-500">{STAGE_LABELS[conv.stage] ?? conv.stage}</td>
+                            <td className="py-1.5 text-slate-500">
+                              {OUTCOME_LABELS[conv.outcome] ?? conv.outcome}
+                            </td>
+                            <td className="py-1.5 text-slate-400">{conv.messageCount}</td>
+                            <td className="py-1.5 text-slate-400">{conv.nudgesSent || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                 </div>
 
@@ -810,24 +881,34 @@ export default function VisitorsPanel({ botId }: { botId: string }) {
                   {detail.events.length === 0 ? (
                     <p className="mt-2 text-[11px] text-slate-400">Событий пока нет.</p>
                   ) : (
-                    <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto">
-                      {detail.events.map((event, index) => (
-                        <li key={index} className="flex items-center gap-2 text-[11px]">
-                          <span className="text-slate-400">{formatDate(event.createdAt)}</span>
-                          <span className="text-slate-600">
-                            {EVENT_LABELS[event.type] ?? event.type}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="mt-2 max-h-64 overflow-y-auto">
+                      <table className="w-full text-[11px]">
+                        <thead className="text-left text-slate-400">
+                          <tr>
+                            <th className="py-1 font-normal">Дата</th>
+                            <th className="py-1 font-normal">Событие</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {detail.events.map((event, index) => (
+                            <tr key={index}>
+                              <td className="py-1.5 text-slate-400">{formatDate(event.createdAt)}</td>
+                              <td className="py-1.5 text-slate-600">
+                                {EVENT_LABELS[event.type] ?? event.type}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               </div>
             )}
           </div>
-        </div>
+        </aside>
       )}
-    </section>
+    </div>
   );
 }
 

@@ -68,6 +68,8 @@ export async function GET(req: Request): Promise<Response> {
     // Conversation counts (one extra query for the visible page of cards).
     const counts = new Map<string, number>();
     const ids = visitors.map((v) => v.id);
+    const factsCounts = new Map<string, number>();
+    const epochsCounts = new Map<string, number>();
     if (ids.length > 0) {
       const conv = await supabase.from('conversations').select('visitor_id').in('visitor_id', ids);
       if (!conv.error) {
@@ -75,6 +77,25 @@ export async function GET(req: Request): Promise<Response> {
           const visitorId = row.visitor_id as string | null;
           if (!visitorId) continue;
           counts.set(visitorId, (counts.get(visitorId) ?? 0) + 1);
+        }
+      }
+
+      // Структурированные факты (sql/0006) и эпохи памяти (sql/0005) — счётчики
+      // для главной таблицы; без миграций тихо остаются нулями.
+      const facts = await supabase.from('visitor_facts').select('visitor_id').in('visitor_id', ids).limit(5000);
+      if (!facts.error) {
+        for (const row of facts.data ?? []) {
+          const visitorId = (row as { visitor_id: string | null }).visitor_id;
+          if (!visitorId) continue;
+          factsCounts.set(visitorId, (factsCounts.get(visitorId) ?? 0) + 1);
+        }
+      }
+      const epochs = await supabase.from('memory_resets').select('visitor_id').in('visitor_id', ids).limit(5000);
+      if (!epochs.error) {
+        for (const row of epochs.data ?? []) {
+          const visitorId = (row as { visitor_id: string | null }).visitor_id;
+          if (!visitorId) continue;
+          epochsCounts.set(visitorId, (epochsCounts.get(visitorId) ?? 0) + 1);
         }
       }
     }
@@ -102,6 +123,8 @@ export async function GET(req: Request): Promise<Response> {
           firstSeen: visitor.first_seen,
           lastSeen: visitor.last_seen,
           conversationsCount: counts.get(visitor.id) ?? 0,
+          factsCount: factsCounts.get(visitor.id) ?? 0,
+          epochsCount: epochsCounts.get(visitor.id) ?? 0,
         };
       }),
     });

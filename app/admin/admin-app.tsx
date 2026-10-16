@@ -123,6 +123,7 @@ export default function AdminApp() {
   }, [theme]);
 
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  const [tab, setTab] = useState<'visitors' | 'bot' | 'knowledge' | 'stats'>('visitors');
 
   const loadBots = useCallback(async (): Promise<void> => {
     const res = await api('/api/admin/bots');
@@ -168,31 +169,41 @@ export default function AdminApp() {
 
   if (phase === 'checking') {
     return (
-      <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <div className="h-6 w-40 rounded bg-slate-100" />
-        <div className="mt-4 h-24 w-full rounded-xl bg-slate-100" />
+      <div
+        className={`admin-shell flex h-full items-center justify-center p-6 ${theme === 'dark' ? 'dark-admin' : ''}`}
+      >
+        <div className="w-[480px] animate-pulse border border-slate-200 bg-white p-8">
+          <div className="h-6 w-40 bg-slate-100" />
+          <div className="mt-4 h-24 w-full bg-slate-100" />
+        </div>
       </div>
     );
   }
 
   if (phase === 'login') {
-    return <LoginCard notConfigured={notConfigured} onLoggedIn={loadBots} />;
+    return (
+      <div
+        className={`admin-shell flex h-full items-center justify-center p-6 ${theme === 'dark' ? 'dark-admin' : ''}`}
+      >
+        <LoginCard notConfigured={notConfigured} onLoggedIn={loadBots} />
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-lg text-white">
-          ⚙️
-        </div>
+    <div className={`admin-shell flex h-full min-h-0 flex-col ${theme === 'dark' ? 'dark-admin' : ''}`}>
+      <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5">
+        <div className="flex h-8 w-8 items-center justify-center bg-indigo-600 text-base text-white">⚙️</div>
         <div>
           <h1 className="text-sm font-semibold text-slate-900">sitebot — админка</h1>
-          <p className="text-xs text-slate-500">База знаний, модель и промпт — без кода и деплоя</p>
+          <p className="hidden text-[11px] text-slate-500 sm:block">
+            {selectedBot ? selectedBot.name : 'База знаний, модель и промпт — без кода и деплоя'}
+          </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <a
             href="/"
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            className="border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
           >
             ← к боту
           </a>
@@ -212,7 +223,7 @@ export default function AdminApp() {
               setSelectedBotId('');
               setPhase('login');
             }}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            className="border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
           >
             Выйти
           </button>
@@ -229,23 +240,66 @@ export default function AdminApp() {
         }}
       />
 
-      {selectedBot && (
-        <>
-          <StatsPanel key={`stats-${selectedBot.id}`} botId={selectedBot.id} />
-          <BotSettings
-            key={selectedBot.id}
-            bot={selectedBot}
-            models={models}
-            onSaved={(bot) => setBots((prev) => prev.map((b) => (b.id === bot.id ? bot : b)))}
-          />
-          <DocumentsPanel
-            botId={selectedBot.id}
-            docs={docs}
-            onChanged={() => void loadDocs(selectedBot.id)}
-          />
+      <nav className="flex items-center gap-1 border-b border-slate-200 bg-white px-3">
+        {(
+          [
+            ['visitors', 'Посетители'],
+            ['bot', 'Бот и логика'],
+            ['knowledge', 'База знаний'],
+            ['stats', 'Статистика'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`border-b-2 px-3 py-2 text-xs ${
+              tab === id
+                ? 'border-indigo-600 font-medium text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
+        {!selectedBot && (
+          <p className="text-xs text-slate-400">Создайте бота, чтобы увидеть данные.</p>
+        )}
+
+        {selectedBot && tab === 'visitors' && (
           <VisitorsPanel key={`visitors-${selectedBot.id}`} botId={selectedBot.id} />
-        </>
-      )}
+        )}
+
+        {selectedBot && tab === 'bot' && (
+          <div className="h-full min-h-0 overflow-auto pr-1">
+            <BotSettings
+              key={selectedBot.id}
+              bot={selectedBot}
+              models={models}
+              onSaved={(bot) => setBots((prev) => prev.map((b) => (b.id === bot.id ? bot : b)))}
+            />
+          </div>
+        )}
+
+        {selectedBot && tab === 'knowledge' && (
+          <div className="h-full min-h-0 overflow-auto pr-1">
+            <DocumentsPanel
+              botId={selectedBot.id}
+              docs={docs}
+              onChanged={() => void loadDocs(selectedBot.id)}
+            />
+          </div>
+        )}
+
+        {selectedBot && tab === 'stats' && (
+          <div className="h-full min-h-0 overflow-auto pr-1">
+            <StatsPanel key={`stats-${selectedBot.id}`} botId={selectedBot.id} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
