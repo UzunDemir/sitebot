@@ -10,6 +10,7 @@ import {
   type BotSettings,
 } from '@/lib/bot-settings';
 import { KNOWLEDGE_PACKS } from '@/lib/knowledge-packs';
+import { TACTICS } from '@/lib/tactics';
 import VisitorsPanel from './visitors-panel';
 
 const CHANNEL_CARDS: Array<{ name: string; status: string; note: string }> = [
@@ -1683,6 +1684,23 @@ type BotStats = {
   inputTokens: number;
   outputTokens: number;
   totalCostUsd: number;
+  /** Шкалы/тактики (стиль 2.0, стратег 2.0) — из событий. */
+  refusals: number;
+  tactics: Array<{ tactic: string; sent: number; goalReached: number; conversion: number }>;
+  styleFlags: Array<{ flag: string; count: number }>;
+};
+
+const TACTIC_TITLES: Record<string, string> = Object.fromEntries(
+  TACTICS.map((tactic) => [tactic.id, tactic.title]),
+);
+
+const STYLE_FLAG_LABELS: Record<string, string> = {
+  no_cta: 'не было следующего шага',
+  no_empathy: 'не было признания чувств',
+  humor_leak: 'юмор/эмодзи в негативе',
+  cliche: 'шаблонная фраза',
+  ty: 'обращение на «ты»',
+  repeat: 'повтор формулировок',
 };
 
 function StatsPanel({ botId }: { botId: string }) {
@@ -1716,6 +1734,7 @@ function StatsPanel({ botId }: { botId: string }) {
           value: (stats.inputTokens + stats.outputTokens).toLocaleString('ru-RU'),
         },
         { label: 'Стоимость (оценка)', value: `${stats.totalCostUsd.toFixed(4)}` },
+        { label: 'Отказы', value: String(stats.refusals ?? 0) },
       ]
     : [];
 
@@ -1736,12 +1755,72 @@ function StatsPanel({ botId }: { botId: string }) {
       ) : (
         <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {items.map((item) => (
-            <div key={item.label} className="rounded-xl bg-slate-50 px-3 py-2">
+            <div key={item.label} className="border border-slate-100 bg-slate-50 px-3 py-2">
               <dt className="text-[11px] text-slate-400">{item.label}</dt>
               <dd className="text-sm font-semibold text-slate-800">{item.value}</dd>
             </div>
           ))}
         </dl>
+      )}
+
+      {stats && stats.tactics.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-semibold text-slate-600">
+            Тактики (события за {stats.days} дн.)
+          </p>
+          <table className="mt-2 w-full text-[11px]">
+            <thead className="text-left text-slate-400">
+              <tr>
+                <th className="py-1 font-normal">Тактика</th>
+                <th className="py-1 font-normal">Ответов</th>
+                <th className="py-1 font-normal">Бесед с целью</th>
+                <th className="py-1 font-normal">Конверсия</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {stats.tactics.map((row) => (
+                <tr key={row.tactic}>
+                  <td className="py-1.5 text-slate-700">{TACTIC_TITLES[row.tactic] ?? row.tactic}</td>
+                  <td className="py-1.5 text-slate-500">{row.sent}</td>
+                  <td className="py-1.5 text-slate-500">{row.goalReached}</td>
+                  <td className="py-1.5 text-slate-500">{row.conversion}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Конверсия — доля бесед с этой тактикой, где цель достигнута (события tactic_used / goal_reached).
+          </p>
+        </div>
+      )}
+
+      {stats && (stats.refusals > 0 || stats.styleFlags.length > 0) && (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="text-xs font-semibold text-slate-600">Отказы</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">{stats.refusals}</p>
+            <p className="mt-1 text-[10px] text-slate-400">
+              «Не звоните», «не надо» — после 2 отказов включается кулдаун продаж.
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-600">Флаги стиля</p>
+            {stats.styleFlags.length === 0 ? (
+              <p className="mt-1 text-[11px] text-slate-400">Провалов пост-проверок не было.</p>
+            ) : (
+              <table className="mt-1 w-full text-[11px]">
+                <tbody className="divide-y divide-slate-100">
+                  {stats.styleFlags.map((row) => (
+                    <tr key={row.flag}>
+                      <td className="py-1 text-slate-600">{STYLE_FLAG_LABELS[row.flag] ?? row.flag}</td>
+                      <td className="py-1 text-right text-slate-500">{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       )}
     </section>
   );

@@ -92,6 +92,68 @@ export async function GET(req: Request): Promise<Response> {
         ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
         : 0;
 
+    // --- шкалы/тактики (стиль 2.0, стратег 2.0): агрегаты по событиям.
+    // Работает сразу, до sql/0007: события пишутся и в режиме деградации.
+    let refusals = 0;
+    let tactics: Array<{ tactic: string; sent: number; goalReached: number; conversion: number }> = [];
+    let styleFlags: Array<{ flag: string; count: number }> = [];
+    if (conversationIds.length > 0) {
+      const evRes = await supabase
+        .from('events')
+        .select('type, payload, conversation_id')
+        .eq('bot_id', botId)
+        .in('type', ['tactic_used', 'refusal', 'style_flags', 'goal_reached'])
+        .gte('created_at', since);
+      if (evRes.error) throw evRes.error;
+      const rows = (evRes.data ?? []) as Array<{
+        type: string;
+        payload: Record<string, unknown> | null;
+        conversation_id: string | null;
+      }>;
+
+      const goals = new Set(
+        rows.filter((row) => row.type === 'goal_reached' && row.conversation_id).map((row) => row.conversation_id as string),
+      );
+      const perTactic = new Map<string, { sent: number; conversations: Set<string> }>();
+      const perFlag = new Map<string, number>();
+
+      for (const row of rows) {
+        if (row.type === 'refusal') refusals += 1;
+        if (row.type === 'tactic_used') {
+          const id = typeof row.payload?.tactic === 'string' ? row.payload.tactic : 'unknown';
+          const entry = perTactic.get(id) ?? { sent: 0, conversations: new Set<string>() };
+          entry.sent += 1;
+          if (row.conversation_id) entry.conversations.add(row.conversation_id);
+          perTactic.set(id, entry);
+        }
+        if (row.type === 'style_flags') {
+          const flags = Array.isArray(row.payload?.flags) ? (row.payload.flags as unknown[]) : [];
+          for (const flag of flags) {
+            if (typeof flag === 'string') perFlag.set(flag, (perFlag.get(flag) ?? 0) + 1);
+          }
+        }
+      }
+
+      tactics = Array.from(perTactic.entries())
+        .map(([tactic, entry]) => {
+          const reached = Array.from(entry.conversations).filter((id) => goals.has(id)).length;
+          return {
+            tactic,
+            sent: entry.sent,
+            goalReached: reached,
+            conversion:
+              entry.conversations.size > 0 ? Math.round((reached / entry.conversations.size) * 100) : 0,
+          };
+        })
+        .sort((a, b) => b.sent - a.sent)
+        .slice(0, 8);
+
+      styleFlags = Array.from(perFlag.entries())
+        .map(([flag, count]) => ({ flag, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
+    }
+
     return Response.json({
       stats: {
         days,
@@ -104,6 +166,9 @@ export async function GET(req: Request): Promise<Response> {
         inputTokens: sum((m) => m.input_tokens),
         outputTokens: sum((m) => m.output_tokens),
         totalCostUsd: Number(sum((m) => m.cost_usd).toFixed(4)),
+        refusals,
+        tactics,
+        styleFlags,
       },
     });
   } catch (err) {
