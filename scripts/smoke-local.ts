@@ -65,6 +65,7 @@ import {
   type StyleContext,
 } from '../lib/style';
 import { pickTactic } from '../lib/tactics';
+import { parseWidgetTheme } from '../lib/widget-theme';
 import { buildSystemPrompt, personalityRules, sanitizeEchoedRefusal } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
@@ -419,6 +420,30 @@ function main(): void {
       console.log('  ✓ стратег 2.0: тактики выбираются, ротируются и выключаются в негативе');
     } else {
       console.error(`❌ стратег 2.0: tactics=${tacticsOk} first=${tClose?.id ?? 'null'} rot=${tRot?.id ?? 'null'}`);
+      failures += 1;
+    }
+
+    // --- виджет: тема точек «печатает» (цвет, размер, прыжок, скорость)
+    const wt = parseWidgetTheme({
+      colors: { typingDots: '#ef4444' },
+      typingDotsSize: 4,
+      typingDotsJump: 9,
+      typingDotsSpeed: 1200,
+    });
+    const wtClamp = parseWidgetTheme({ typingDotsSize: 99, typingDotsSpeed: 100 });
+    const widgetOk =
+      wt.colors?.typingDots === '#ef4444' &&
+      wt.typingDotsSize === 4 &&
+      wt.typingDotsJump === 9 &&
+      wt.typingDotsSpeed === 1200 &&
+      wtClamp.typingDotsSize === 10 &&
+      wtClamp.typingDotsSpeed === 300 &&
+      parseWidgetTheme({ typingDotsJump: 'x' }).typingDotsJump === undefined;
+
+    if (widgetOk) {
+      console.log('  ✓ виджет: тема точек «печатает» (цвет, размер, прыжок, скорость)');
+    } else {
+      console.error(`❌ виджет: тема точек — ${JSON.stringify({ wt, wtClamp })}`);
       failures += 1;
     }
 

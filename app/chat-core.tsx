@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
@@ -107,18 +108,42 @@ function paletteOf(t: WidgetTheme): Palette {
   };
 }
 
-/** Три бегущие точки — «бот печатает» (цвет настраивается в теме виджета). */
-function TypingDots({ color }: { color: string }) {
+/**
+ * Три бегущие точки — «бот печатает». Цвет, размер точки, высота прыжка и
+ * скорость цикла настраиваются в теме виджета (theme.typingDots*).
+ */
+function TypingDots({
+  color,
+  size,
+  jump,
+  speed,
+}: {
+  color: string;
+  size: number;
+  jump: number;
+  speed: number;
+}) {
+  const stagger = Math.max(60, Math.round(speed / 6));
   return (
-    <span className="inline-flex items-center gap-1.5" role="status" aria-label="Бот печатает">
+    <span
+      className="inline-flex items-end gap-1"
+      role="status"
+      aria-label="Бот печатает"
+      style={{
+        height: size + jump,
+        ...({ '--sitebot-dot-jump': `${jump}px` } as CSSProperties),
+      }}
+    >
       {[0, 1, 2].map((index) => (
         <span
           key={index}
-          className="h-2 w-2 animate-bounce rounded-full"
+          className="rounded-full"
           style={{
+            width: size,
+            height: size,
             backgroundColor: color,
-            animationDelay: `${index * 150}ms`,
-            animationDuration: '900ms',
+            animation: `sitebot-dot-jump ${speed}ms ease-in-out infinite`,
+            animationDelay: `${index * stagger}ms`,
           }}
         />
       ))}
@@ -146,6 +171,10 @@ export function Chat({
 }) {
   const t: WidgetTheme = { ...(bot.theme ?? {}), ...(theme ?? {}) };
   const p = paletteOf(t);
+  // Индикатор «печатает»: размер точек, высота прыжка и скорость — из темы.
+  const dotsSize = t.typingDotsSize ?? 5;
+  const dotsJump = t.typingDotsJump ?? 3;
+  const dotsSpeed = t.typingDotsSpeed ?? 900;
   const title = t.title || bot.name;
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
@@ -161,6 +190,7 @@ export function Chat({
   // ответом посетителя или кликом по кружку).
   const [openUnread, setOpenUnread] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // Dialog engine refs (survive effect re-runs; read at tick time).
   const nudgesRef = useRef<NudgesConfig | null>(null);
   const nudgesSentRef = useRef(0);
@@ -194,6 +224,12 @@ export function Chat({
     // In widget mode (host-page iframe) we can ask the loader to
     // collapse the chat window via postMessage.
     setInFrame(window.parent !== window);
+  }, []);
+
+  // Курсор всегда готов к вводу: фокус при открытии окна; после каждого
+  // ответа — эффект рядом с useChat (там появляется status).
+  useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
   }, []);
 
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -239,6 +275,12 @@ export function Chat({
   );
 
   const { messages, sendMessage, setMessages, status, error } = useChat({ transport });
+
+  // После каждого ответа бота (статус снова 'ready') возвращаем курсор в
+  // поле ввода — посетитель может печатать сразу.
+  useEffect(() => {
+    if (status === 'ready') inputRef.current?.focus({ preventScroll: true });
+  }, [status]);
 
   // Memory lives on the server: the dialog is stored per bot + session and
   // the model reads it from the DB (the widget never replays the past chat —
@@ -360,6 +402,7 @@ export function Chat({
         chatOpenRef.current = true;
         unreadNudgesRef.current = 0;
         setOpenUnread(0);
+        window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 60);
         try {
           window.parent.postMessage({ type: 'sitebot:unread', count: 0 }, '*');
         } catch {
@@ -587,6 +630,17 @@ export function Chat({
     window.setTimeout(() => setForget(0), 4000);
   }
 
+  /** Клик по ленте возвращает курсор в поле ввода (не мешая выделению текста). */
+  function focusInput() {
+    try {
+      const selection = window.getSelection();
+      if (selection && selection.isCollapsed === false) return;
+    } catch {
+      // ignore
+    }
+    inputRef.current?.focus({ preventScroll: true });
+  }
+
   /** Переход к непрочитанным касаниям: скролл к первому из них + сброс кружка. */
   function jumpToUnread() {
     const list = listRef.current;
@@ -607,6 +661,11 @@ export function Chat({
   }
 
   const bubbleRadius = p.radius;
+  // Пока ассистентского сообщения в ленте ещё нет — отдельный пузырь с
+  // точками на месте будущего ответа (позже точки переедут внутрь пузыря).
+  const lastMessage = messages[messages.length - 1];
+  const awaitingAssistant =
+    status === 'submitted' && (!lastMessage || lastMessage.role === 'user');
   const greetingText = visitor?.returning
     ? visitor.name
       ? `С возвращением, ${visitor.name}!`
@@ -712,7 +771,7 @@ export function Chat({
         )}
       </header>
 
-      <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+      <div ref={listRef} onClick={focusInput} className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
         <div className="flex justify-start">
           <div
             className="max-w-[85%] px-4 py-3 text-sm whitespace-pre-wrap"
@@ -732,6 +791,11 @@ export function Chat({
           const sources = sourcesFromParts(message.parts);
           const feedback = feedbackFromParts(message.parts);
           const proactive = proactiveFromParts(message.parts);
+          const isLastMessage = message.id === messages[messages.length - 1]?.id;
+          // Ответ пишется прямо на месте точек: пока текста нет, точки бегут
+          // в ЭТОМ пузыре, с первым токеном текст заменяет их.
+          const showDotsHere =
+            (status === 'submitted' || status === 'streaming') && text === '' && isLastMessage;
 
           if (message.role === 'user') {
             return (
@@ -768,7 +832,16 @@ export function Chat({
                     borderBottomLeftRadius: 6,
                   }}
                 >
-                  {text || (status === 'streaming' ? '…' : '')}
+                  {showDotsHere ? (
+                    <TypingDots
+                      color={p.typingDots}
+                      size={dotsSize}
+                      jump={dotsJump}
+                      speed={dotsSpeed}
+                    />
+                  ) : (
+                    text
+                  )}
                 </div>
                 {sources.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
@@ -823,18 +896,23 @@ export function Chat({
           </div>
         )}
 
-        {status === 'submitted' && (
+        {awaitingAssistant && (
           <div className="flex justify-start">
             <div
               className="px-4 py-3 text-sm"
               style={{
                 backgroundColor: p.botBubbleBg,
-                color: p.subtleText,
+                color: p.botBubbleText,
                 borderRadius: bubbleRadius,
                 borderBottomLeftRadius: 6,
               }}
             >
-              <TypingDots color={p.typingDots} />
+              <TypingDots
+                color={p.typingDots}
+                size={dotsSize}
+                jump={dotsJump}
+                speed={dotsSpeed}
+              />
             </div>
           </div>
         )}
@@ -860,6 +938,7 @@ export function Chat({
       >
         <div className="flex gap-2">
           <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Спросите что-нибудь…"

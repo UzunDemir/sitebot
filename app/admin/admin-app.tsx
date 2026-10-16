@@ -1325,6 +1325,57 @@ function BotSettings({
           </div>
         </details>
 
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs font-medium text-slate-500">
+            Индикатор «печатает» (три точки): размер, прыжок и скорость. Цвет — в «Тонкой настройке
+            цветов» выше.
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label className="space-y-1 text-xs text-slate-500">
+              Размер точки, px (3–10)
+              <input
+                type="number"
+                min={3}
+                max={10}
+                value={theme.typingDotsSize ?? ''}
+                placeholder="5"
+                onChange={(e) =>
+                  setThemeField('typingDotsSize', e.target.value ? Number(e.target.value) : undefined)
+                }
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+              />
+            </label>
+            <label className="space-y-1 text-xs text-slate-500">
+              Высота прыжка, px (1–10)
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={theme.typingDotsJump ?? ''}
+                placeholder="3"
+                onChange={(e) =>
+                  setThemeField('typingDotsJump', e.target.value ? Number(e.target.value) : undefined)
+                }
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+              />
+            </label>
+            <label className="space-y-1 text-xs text-slate-500">
+              Скорость цикла, мс (300–3000)
+              <input
+                type="number"
+                min={300}
+                max={3000}
+                value={theme.typingDotsSpeed ?? ''}
+                placeholder="900"
+                onChange={(e) =>
+                  setThemeField('typingDotsSpeed', e.target.value ? Number(e.target.value) : undefined)
+                }
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+              />
+            </label>
+          </div>
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="space-y-1 text-xs text-slate-500">
             Шрифт (CSS font-family)

@@ -69,6 +69,12 @@ export type WidgetTheme = {
   radius?: number;
   /** Dark color scheme for the chat (explicit colors win). */
   dark?: boolean;
+  /** Точки «бот печатает»: размер точки, px (3..10). */
+  typingDotsSize?: number;
+  /** Прыжок точек, px (1..10). */
+  typingDotsJump?: number;
+  /** Скорость цикла анимации точек, мс (300..3000). */
+  typingDotsSpeed?: number;
   /** Fine-grained palette overrides. */
   colors?: WidgetColors;
   /** Proactive teaser message near the launcher. */
@@ -181,6 +187,9 @@ export function parseWidgetTheme(input: unknown): WidgetTheme {
   theme.windowHeight = intInRange(raw.windowHeight, 400, 820);
   theme.radius = intInRange(raw.radius, 0, 28);
   if (raw.dark === true) theme.dark = true;
+  theme.typingDotsSize = intInRange(raw.typingDotsSize, 3, 10);
+  theme.typingDotsJump = intInRange(raw.typingDotsJump, 1, 10);
+  theme.typingDotsSpeed = intInRange(raw.typingDotsSpeed, 300, 3000);
 
   theme.colors = colors(raw.colors);
   theme.proactive = proactive(raw.proactive);
