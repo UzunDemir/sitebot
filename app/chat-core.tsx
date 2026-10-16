@@ -81,6 +81,7 @@ type Palette = {
   border: string;
   subtleText: string;
   inputBg: string;
+  typingDots: string;
   radius: number;
 };
 
@@ -101,8 +102,28 @@ function paletteOf(t: WidgetTheme): Palette {
     border: dark ? '#334155' : '#e2e8f0',
     subtleText: dark ? '#64748b' : '#94a3b8',
     inputBg: c.inputBg || (dark ? '#0f172a' : '#ffffff'),
+    typingDots: c.typingDots || (dark ? '#94a3b8' : '#64748b'),
     radius: Math.min(28, Math.max(0, t.radius ?? 16)),
   };
+}
+
+/** Три бегущие точки — «бот печатает» (цвет настраивается в теме виджета). */
+function TypingDots({ color }: { color: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5" role="status" aria-label="Бот печатает">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className="h-2 w-2 animate-bounce rounded-full"
+          style={{
+            backgroundColor: color,
+            animationDelay: `${index * 150}ms`,
+            animationDuration: '900ms',
+          }}
+        />
+      ))}
+    </span>
+  );
 }
 
 /** IANA-таймзона браузера — «осознание времени» на сервере (Ф3). */
@@ -136,6 +157,9 @@ export function Chat({
   // Перезапуск движка дожима после ответа посетителя (серия — заново).
   const [engineEpoch, setEngineEpoch] = useState(0);
   const [inFrame, setInFrame] = useState(false);
+  // Непрочитанные касания при ОТКРЫТОМ окне — кружок в шапке (сбрасывается
+  // ответом посетителя или кликом по кружку).
+  const [openUnread, setOpenUnread] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   // Dialog engine refs (survive effect re-runs; read at tick time).
   const nudgesRef = useRef<NudgesConfig | null>(null);
@@ -335,6 +359,7 @@ export function Chat({
       if (data.type === 'sitebot:chat-opened') {
         chatOpenRef.current = true;
         unreadNudgesRef.current = 0;
+        setOpenUnread(0);
         try {
           window.parent.postMessage({ type: 'sitebot:unread', count: 0 }, '*');
         } catch {
@@ -442,6 +467,10 @@ export function Chat({
             } catch {
               // not embedded — no badge to update
             }
+          } else {
+            // Окно открыто: касание не должно потеряться — считаем и показываем
+            // кружок в шапке (клик — к последним сообщениям, счётчик сброшен).
+            setOpenUnread((count) => count + 1);
           }
           const gapSec = attempt <= 0 ? config.firstDelaySec : config.intervalSec * Math.pow(2, attempt - 1);
           arm(gapSec * 1000);
@@ -517,6 +546,7 @@ export function Chat({
     }
     lastNudgeIdRef.current = null;
     nudgesSentRef.current = 0;
+    setOpenUnread(0);
     // Ответ посетителя оживляет диалог: 'lost' и 'goal_reached' сервер
     // открывает заново (цель можно достичь повторно), 'stopped' — нет.
     if (outcomeRef.current === 'lost' || outcomeRef.current === 'goal_reached') {
@@ -620,6 +650,21 @@ export function Chat({
           className={`ml-auto inline-flex h-2.5 w-2.5 rounded-full ${busy ? 'bg-amber-400' : 'bg-emerald-500'}`}
           title={busy ? 'Генерирую ответ' : 'Готов'}
         />
+        {openUnread > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setOpenUnread(0);
+              listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+            }}
+            title="Новые сообщения"
+            aria-label={`Непрочитанных сообщений: ${openUnread}`}
+            className="ml-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-xs font-semibold text-white"
+            style={{ backgroundColor: p.accent }}
+          >
+            {openUnread > 9 ? '9+' : openUnread}
+          </button>
+        )}
         {compact && inFrame && (
           <button
             type="button"
@@ -632,7 +677,7 @@ export function Chat({
                 // ignore
               }
             }}
-            className="-mr-1 ml-1 flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none opacity-60 transition-opacity hover:opacity-100"
+            className="-mr-1 ml-1 flex h-10 w-10 items-center justify-center rounded-full text-2xl leading-none opacity-70 transition-opacity hover:opacity-100"
             style={{ color: p.headerText }}
           >
             ▾
@@ -761,7 +806,7 @@ export function Chat({
                 borderBottomLeftRadius: 6,
               }}
             >
-              Ищу в базе знаний…
+              <TypingDots color={p.typingDots} />
             </div>
           </div>
         )}

@@ -16,6 +16,8 @@ export type WidgetColors = {
   userBubbleText?: string;
   pageBg?: string;
   inputBg?: string;
+  /** Цвет точек «бот печатает» (по умолчанию — серый). */
+  typingDots?: string;
 };
 
 export type WidgetProactive = {
@@ -85,6 +87,7 @@ const COLOR_KEYS: Array<keyof WidgetColors> = [
   'userBubbleText',
   'pageBg',
   'inputBg',
+  'typingDots',
 ];
 
 function clamp(value: number, min: number, max: number): number {

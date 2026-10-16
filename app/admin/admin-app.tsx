@@ -29,6 +29,7 @@ const THEME_COLOR_FIELDS: Array<{ key: keyof WidgetColors; label: string }> = [
   { key: 'userBubbleText', label: 'Пузырь клиента: текст' },
   { key: 'pageBg', label: 'Фон чата' },
   { key: 'inputBg', label: 'Поле ввода: фон' },
+  { key: 'typingDots', label: 'Точки «печатает» (по умолчанию серые)' },
 ];
 
 type Bot = {
