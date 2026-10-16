@@ -40,6 +40,23 @@ import {
 import { runStrategist } from '@/lib/visitor-memory';
 import { isStopRequest, STOP_REPLY } from '@/lib/nudge';
 import { FORGET_REPLY, isForgetRequest } from '@/lib/forget';
+import {
+  buildStyleBlock,
+  correctiveNotes,
+  findCliche,
+  hasContactAsk,
+  hasCta,
+  hasEmoji,
+  hasEmpathyMarker,
+  hasTy,
+  isNegativeMessage,
+  isRefusalMessage,
+  REFUSAL_COOLDOWN_COUNT,
+  REFUSAL_COOLDOWN_MS,
+  resolveStyle,
+  styleText,
+  styleTextStream,
+} from '@/lib/style';
 import { getActiveSince, softResetVisitor } from '@/lib/memory-window';
 import { buildNowAnswer, describeNow, isTimeOrDateQuestion } from '@/lib/clock';
 import { formatBirthday, isBirthdayToday, makeBirthday, type Birthday } from '@/lib/birthday';
@@ -214,6 +231,45 @@ export async function POST(req: Request): Promise<Response> {
     // --- активное окно памяти (sql/0005): после «забыть меня» модель, дожим и
     // покупки видят только новую эпоху; архив остаётся в БД.
     const activeSince = visitorId ? await getActiveSince(visitorId) : null;
+
+    // --- шкалы: реальная механика (sql/0007). Негатив/отказ подавляют продажи,
+    // отказ запускает «остывание», CTA и просьбы контакта — по бюджету.
+    const negativeNow = isNegativeMessage(query);
+    const refusalNow = isRefusalMessage(query);
+    if (conversationId && refusalNow) {
+      const refusals = (conversationMeta?.refusals ?? 0) + 1;
+      const cooldown =
+        refusals >= REFUSAL_COOLDOWN_COUNT
+          ? new Date(Date.now() + REFUSAL_COOLDOWN_MS).toISOString()
+          : conversationMeta?.silencedUntil ?? null;
+      await updateConversationFields(conversationId, {
+        refusals,
+        ...(cooldown ? { silenced_until: cooldown } : {}),
+      });
+      await recordEvent({
+        botId: bot.id,
+        visitorId,
+        conversationId,
+        type: 'refusal',
+        payload: { refusals, cooldown: Boolean(cooldown && refusals >= REFUSAL_COOLDOWN_COUNT) },
+      });
+    }
+    const silencedNow = Boolean(
+      conversationMeta?.silencedUntil &&
+        new Date(conversationMeta.silencedUntil).getTime() > Date.now(),
+    );
+    const style = resolveStyle(
+      settings,
+      {
+        negative: negativeNow,
+        refusal: refusalNow,
+        silenced: silencedNow,
+        ctaSent: conversationMeta?.ctaSent ?? 0,
+        phoneAsked: conversationMeta?.phoneAsked ?? 0,
+      },
+      { baseTemperature: bot.temperature },
+    );
+    const styleBlock = buildStyleBlock(style, correctiveNotes(conversationMeta?.styleFlags));
 
     // --- «ответ отменяет дожим»: счётчик сбрасывается + событие для метрик.
     if (conversationId && conversationMeta && conversationMeta.nudgesSent > 0) {
@@ -426,7 +482,7 @@ export async function POST(req: Request): Promise<Response> {
           purchases: purchasesSummary,
         }
       : undefined;
-    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory, nowInfo.text);
+    const system = buildSystemPrompt(bot.system_prompt ?? '', sources, settings, memory, nowInfo.text, styleBlock);
     const showSources = settings.showSources !== false;
 
     // --- model context: dialog memory lives in the DB, not in the UI. The
@@ -460,7 +516,7 @@ export async function POST(req: Request): Promise<Response> {
       model: resolveModel(bot.model_id),
       instructions: system,
       messages: modelMessages,
-      temperature: bot.thinking_enabled ? undefined : bot.temperature,
+      temperature: bot.thinking_enabled ? undefined : style.temperature,
       maxOutputTokens: settings.maxOutputTokens ?? BOT_SETTINGS_DEFAULTS.maxOutputTokens,
       providerOptions: {
         deepseek: {
@@ -486,11 +542,11 @@ export async function POST(req: Request): Promise<Response> {
           });
         }
 
-        await writer.merge(toUIMessageStream({ stream: result.stream }));
+        await writer.merge(toUIMessageStream({ stream: styleTextStream(result.stream, style) }));
 
         // After the stream completes: persist the answer and hand the
         // client the stored message id so it can send feedback.
-        const text = await result.text;
+        const text = styleText(await result.text, style);
         const usage = (await result.usage) as
           | { inputTokens?: number; outputTokens?: number; promptTokens?: number; completionTokens?: number }
           | undefined;
@@ -523,6 +579,34 @@ export async function POST(req: Request): Promise<Response> {
           } catch (err) {
             console.warn('[chat] failed to persist assistant message:', err);
           }
+        }
+
+        // --- пост-проверки стиля (sql/0007): события — даже без миграции,
+        // счётчики CTA/контактов и флаги — с ней. Замечания влияют на
+        // следующий ответ (correctiveNotes → buildStyleBlock).
+        const styleFlags: string[] = [];
+        const sentCta = hasCta(text);
+        const askedContact = hasContactAsk(text);
+        if (style.ctaPolicy !== 'none' && !sentCta) styleFlags.push('no_cta');
+        if (style.empathyFirst && !hasEmpathyMarker(text)) styleFlags.push('no_empathy');
+        if (style.humor === 'off' && hasEmoji(text)) styleFlags.push('humor_leak');
+        if (findCliche(text)) styleFlags.push('cliche');
+        if (style.pronoun === 'вы' && hasTy(text)) styleFlags.push('ty');
+        if (conversationId) {
+          await updateConversationFields(conversationId, {
+            ...(sentCta ? { cta_sent: (conversationMeta?.ctaSent ?? 0) + 1 } : {}),
+            ...(askedContact ? { phone_asked: (conversationMeta?.phoneAsked ?? 0) + 1 } : {}),
+            style_flags: { flags: styleFlags, at: new Date().toISOString() },
+          });
+        }
+        if (styleFlags.length > 0) {
+          await recordEvent({
+            botId: bot.id,
+            visitorId,
+            conversationId,
+            type: 'style_flags',
+            payload: { flags: styleFlags, ctaPolicy: style.ctaPolicy, humor: style.humor },
+          });
         }
 
         if (inputTokens + outputTokens > 0) {

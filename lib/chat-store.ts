@@ -218,6 +218,13 @@ export type ConversationMeta = {
   nudgesSent: number;
   lastNudgeAt: string | null;
   visitorId: string | null;
+  /** Шкалы — реальная механика (sql/0007): CTA-бюджет, отказы, кулдаун. */
+  ctaSent: number;
+  phoneAsked: number;
+  refusals: number;
+  silencedUntil: string | null;
+  /** Последние пост-проверки стиля (для корректировки следующего ответа). */
+  styleFlags: { flags?: string[]; at?: string } | null;
 };
 
 function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
@@ -229,10 +236,21 @@ function parseConversationMeta(row: Record<string, unknown>): ConversationMeta {
     nudgesSent: typeof row.nudges_sent === 'number' ? row.nudges_sent : 0,
     lastNudgeAt: typeof row.last_nudge_at === 'string' ? row.last_nudge_at : null,
     visitorId: typeof row.visitor_id === 'string' ? row.visitor_id : null,
+    ctaSent: typeof row.cta_sent === 'number' ? row.cta_sent : 0,
+    phoneAsked: typeof row.phone_asked === 'number' ? row.phone_asked : 0,
+    refusals: typeof row.refusals === 'number' ? row.refusals : 0,
+    silencedUntil: typeof row.silenced_until === 'string' ? row.silenced_until : null,
+    styleFlags:
+      row.style_flags && typeof row.style_flags === 'object' && !Array.isArray(row.style_flags)
+        ? (row.style_flags as { flags?: string[]; at?: string })
+        : null,
   };
 }
 
-const CONVERSATION_META_COLUMNS = 'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id';
+const CONVERSATION_META_COLUMNS =
+  'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id, cta_sent, phone_asked, refusals, silenced_until, style_flags';
+/** sql/0003 без 0007: стиль-колонок ещё нет. */
+const CONVERSATION_META_NO_STYLE = 'id, bot_id, stage, outcome, nudges_sent, last_nudge_at, visitor_id';
 const CONVERSATION_META_LEGACY = 'id, bot_id';
 
 export async function loadConversationById(conversationId: string): Promise<ConversationMeta | null> {
@@ -243,13 +261,23 @@ export async function loadConversationById(conversationId: string): Promise<Conv
     .eq('id', conversationId)
     .maybeSingle();
   if (full.error && isMissingColumnError(full.error)) {
-    const bare = await supabase
+    // sql/0003 без 0007 — пытаемся без стиль-колонок.
+    const noStyle = await supabase
       .from('conversations')
-      .select(CONVERSATION_META_LEGACY)
+      .select(CONVERSATION_META_NO_STYLE)
       .eq('id', conversationId)
       .maybeSingle();
-    if (bare.error) throw bare.error;
-    return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+    if (noStyle.error && isMissingColumnError(noStyle.error)) {
+      const bare = await supabase
+        .from('conversations')
+        .select(CONVERSATION_META_LEGACY)
+        .eq('id', conversationId)
+        .maybeSingle();
+      if (bare.error) throw bare.error;
+      return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+    }
+    if (noStyle.error) throw noStyle.error;
+    return noStyle.data ? parseConversationMeta(noStyle.data as Record<string, unknown>) : null;
   }
   if (full.error) throw full.error;
   return full.data ? parseConversationMeta(full.data as Record<string, unknown>) : null;
@@ -267,14 +295,25 @@ export async function loadConversationByKey(
     .eq('session_key', sessionKey)
     .maybeSingle();
   if (full.error && isMissingColumnError(full.error)) {
-    const bare = await supabase
+    // sql/0003 без 0007 — пытаемся без стиль-колонок.
+    const noStyle = await supabase
       .from('conversations')
-      .select(CONVERSATION_META_LEGACY)
+      .select(CONVERSATION_META_NO_STYLE)
       .eq('bot_id', botId)
       .eq('session_key', sessionKey)
       .maybeSingle();
-    if (bare.error) throw bare.error;
-    return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+    if (noStyle.error && isMissingColumnError(noStyle.error)) {
+      const bare = await supabase
+        .from('conversations')
+        .select(CONVERSATION_META_LEGACY)
+        .eq('bot_id', botId)
+        .eq('session_key', sessionKey)
+        .maybeSingle();
+      if (bare.error) throw bare.error;
+      return bare.data ? parseConversationMeta(bare.data as Record<string, unknown>) : null;
+    }
+    if (noStyle.error) throw noStyle.error;
+    return noStyle.data ? parseConversationMeta(noStyle.data as Record<string, unknown>) : null;
   }
   if (full.error) throw full.error;
   return full.data ? parseConversationMeta(full.data as Record<string, unknown>) : null;
@@ -287,6 +326,12 @@ export type ConversationPatch = {
   last_nudge_at?: string | null;
   last_active_at?: string;
   summary?: string;
+  /** Шкалы — реальная механика (sql/0007). */
+  cta_sent?: number;
+  phone_asked?: number;
+  refusals?: number;
+  silenced_until?: string | null;
+  style_flags?: { flags: string[]; at: string };
 };
 
 /** Best-effort conversation update; degrades on the pre-0003 schema. */

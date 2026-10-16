@@ -54,6 +54,16 @@ import {
   sanitizeNudgeText,
 } from '../lib/nudge';
 import { isForgetRequest } from '../lib/forget';
+import {
+  hasContactAsk,
+  hasCta,
+  hasEmpathyMarker,
+  isNegativeMessage,
+  isRefusalMessage,
+  resolveStyle,
+  styleText,
+  type StyleContext,
+} from '../lib/style';
 import { buildSystemPrompt, personalityRules, sanitizeEchoedRefusal } from '../lib/prompts';
 import { DEMO_KB } from './demo-kb';
 
@@ -325,6 +335,58 @@ function main(): void {
           .map((t) => `${t}=${isForgetRequest(t)}`)
           .join(', ')}`,
       );
+      failures += 1;
+    }
+
+    // --- шкалы 2.0: детекторы и resolveStyle (реальная механика)
+    const styleCtx = (over: Partial<StyleContext>): StyleContext => ({
+      negative: false,
+      refusal: false,
+      silenced: false,
+      ctaSent: 0,
+      phoneAsked: 0,
+      ...over,
+    });
+    const detectorsOk =
+      isNegativeMessage('Посылка задерживается, уже второй раз!') &&
+      !isNegativeMessage('Где мой заказ?') &&
+      isRefusalMessage('Не звоните мне больше') &&
+      isRefusalMessage('нет, спасибо') &&
+      !isRefusalMessage('нет проблем, всё отлично') &&
+      hasCta('Давайте я перезвоню вам завтра в 15:00') &&
+      !hasCta('Понимаю вас. Срок доставки — 3 дня.') &&
+      hasContactAsk('Оставьте, пожалуйста, номер телефона') &&
+      hasEmpathyMarker('Понимаю, это очень досадно') &&
+      !hasEmpathyMarker('Срок доставки — 3 дня.');
+
+    const negStyle = resolveStyle(
+      { aggressiveness: 90, empathy: 90, humor: 70 },
+      styleCtx({ negative: true }),
+    );
+    const silentStyle = resolveStyle({ aggressiveness: 90 }, styleCtx({ silenced: true }));
+    const budgetStyle = resolveStyle({ aggressiveness: 90 }, styleCtx({ phoneAsked: 3 }));
+    const witStyle = resolveStyle({ wit: 100, cunning: 100 }, styleCtx({}), {
+      baseTemperature: 0.7,
+    });
+    const cleaned = styleText('Ура!!! 🎉 Отлично!', { stripExclamations: true, stripEmoji: true });
+    const styleOk =
+      negStyle.empathyFirst &&
+      negStyle.humor === 'off' &&
+      negStyle.ctaPolicy === 'none' &&
+      negStyle.stripExclamations &&
+      silentStyle.ctaPolicy === 'none' &&
+      silentStyle.phoneAskAllowed === false &&
+      budgetStyle.phoneAskAllowed === false &&
+      budgetStyle.ctaPolicy === 'active' &&
+      witStyle.temperature >= 0.85 &&
+      !cleaned.includes('!!') &&
+      !/[\u{1F300}-\u{1FAFF}]/u.test(cleaned) &&
+      cleaned.includes('Ура.');
+
+    if (detectorsOk && styleOk) {
+      console.log('  ✓ шкалы 2.0: детекторы и resolveStyle работают (CTA-политика, кулдаун, бюджет, temperature)');
+    } else {
+      console.error(`❌ шкалы 2.0: detectors=${detectorsOk} style=${styleOk}`);
       failures += 1;
     }
 

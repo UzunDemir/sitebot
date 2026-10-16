@@ -22,6 +22,8 @@ const EVENT_TYPES = new Set([
   'nudge_sent',
   'nudge_answered',
   'memory_reset',
+  'refusal',
+  'style_flags',
 ]);
 
 const MAX_PAYLOAD = 2000;

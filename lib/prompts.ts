@@ -216,6 +216,8 @@ export function buildSystemPrompt(
   settings: BotSettings = {},
   memory?: VisitorMemoryContext,
   nowText?: string,
+  /** Жёсткие правила текущего ответа (lib/style.ts) — приоритетнее шкал. */
+  styleBlock?: string | null,
 ): string {
   const context = sources
     .map((source, index) => {
@@ -299,6 +301,10 @@ export function buildSystemPrompt(
       'Никогда не говори, что «не хранишь историю переписки» или что «доступа к ней нет»: это запрещённый устаревший отказ, не копируй его из своих прошлых ответов.',
     ].join('\n'),
   );
+
+  if (styleBlock) {
+    blocks.push(styleBlock);
+  }
 
   return blocks.filter(Boolean).join('\n\n');
 }

@@ -822,6 +822,50 @@ function BotSettings({
           </p>
         )}
 
+        <div className="space-y-2 border-t border-slate-200 pt-3">
+          <p className="text-xs font-semibold text-slate-600">Пресеты характера</p>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                [
+                  'Поддержка',
+                  { aggressiveness: 10, empathy: 80, tone: 10, humor: 35, cunning: 20, wit: 30 },
+                ],
+                [
+                  'Продажа-консультация',
+                  { aggressiveness: 45, empathy: 55, tone: 35, humor: 35, cunning: 55, wit: 45 },
+                ],
+                [
+                  'Активный клоузер',
+                  { aggressiveness: 90, empathy: 40, tone: 20, humor: 40, cunning: 85, wit: 85 },
+                ],
+              ] as const
+            ).map(([label, preset]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  const apply = setSetting as unknown as (key: string, value: number) => void;
+                  for (const [key, value] of Object.entries(preset)) apply(key, value);
+                }}
+                className="border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400">
+            Пресет задаёт все шкалы разом — дальше можно подстроить вручную.
+          </p>
+          {effectiveAggressiveness(settings) >= 80 &&
+            (settings.empathy ?? BOT_SETTINGS_DEFAULTS.empathy) >= 80 && (
+              <p className="text-[10px] text-amber-700">
+                Конфликт шкал: агрессивность и эмпатия обе высокие — бот давит и сочувствует
+                одновременно. Обычно выбирают одно: «Активный клоузер» или «Поддержка».
+              </p>
+            )}
+        </div>
+
         <div className="space-y-3 border-t border-slate-200 pt-3">
           <p className="text-xs font-semibold text-slate-600">Знания и персона</p>
           <label className="space-y-1 text-xs text-slate-500">

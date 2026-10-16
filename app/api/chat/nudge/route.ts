@@ -110,6 +110,11 @@ export async function POST(req: Request): Promise<Response> {
 
     const now = new Date();
 
+    // «Остывание» продаж после отказов (sql/0007): в кулдауне не трогаем.
+    if (conversation.silencedUntil && new Date(conversation.silencedUntil).getTime() > now.getTime()) {
+      return deny('cooldown');
+    }
+
     // --- quiet hours in the visitor's timezone (client sends its tz)
     if (proactive.quietHours.enabled) {
       const fromMinutes = minutesOf(proactive.quietHours.from);
