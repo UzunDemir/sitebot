@@ -439,7 +439,9 @@ function main(): void {
       wtClamp.typingDotsSize === 10 &&
       wtClamp.typingDotsSpeed === 300 &&
       parseWidgetTheme({ typingDotsJump: 'x' }).typingDotsJump === undefined &&
-      parseWidgetTheme({ typingLabel: 'writing' }).typingLabel === 'writing';
+      parseWidgetTheme({ typingLabel: 'writing' }).typingLabel === 'writing' &&
+      parseWidgetTheme({ typingDotsMode: 'run' }).typingDotsMode === 'run' &&
+      parseWidgetTheme({ typingDotsMode: 'zoom' }).typingDotsMode === undefined;
 
     if (widgetOk) {
       console.log('  ✓ виджет: тема точек «печатает» (цвет, размер, прыжок, скорость)');

@@ -118,14 +118,18 @@ function TypingDots({
   jump,
   speed,
   label,
+  mode,
 }: {
   color: string;
   size: number;
   jump: number;
   speed: number;
   label: string;
+  /** jump — прыгают вверх-вниз; run — бегут слева направо. */
+  mode: 'jump' | 'run';
 }) {
   const stagger = Math.max(60, Math.round(speed / 6));
+  const runStep = size + 4;
   return (
     <span className="inline-flex items-center gap-2" role="status" aria-label="Бот печатает">
       {label ? (
@@ -134,7 +138,7 @@ function TypingDots({
       <span
         className="inline-flex items-end gap-1"
         style={{
-          height: size + jump,
+          height: mode === 'run' ? size : size + jump,
           ...({ '--sitebot-dot-jump': `${jump}px` } as CSSProperties),
         }}
       >
@@ -142,13 +146,24 @@ function TypingDots({
           <span
             key={index}
             className="rounded-full"
-            style={{
-              width: size,
-              height: size,
-              backgroundColor: color,
-              animation: `sitebot-dot-jump ${speed}ms ease-in-out infinite`,
-              animationDelay: `${index * stagger}ms`,
-            }}
+            style={
+              mode === 'run'
+                ? {
+                    width: size,
+                    height: size,
+                    backgroundColor: color,
+                    animation: `sitebot-dot-run ${speed}ms linear infinite`,
+                    animationDelay: `${-Math.round((speed / 3) * index)}ms`,
+                    ...({ '--sitebot-dot-run': `${runStep}px` } as CSSProperties),
+                  }
+                : {
+                    width: size,
+                    height: size,
+                    backgroundColor: color,
+                    animation: `sitebot-dot-jump ${speed}ms ease-in-out infinite`,
+                    animationDelay: `${index * stagger}ms`,
+                  }
+            }
           />
         ))}
       </span>
@@ -181,6 +196,7 @@ export function Chat({
   const dotsJump = t.typingDotsJump ?? 3;
   const dotsSpeed = t.typingDotsSpeed ?? 900;
   const dotsLabel = t.typingLabel ?? 'Печатает';
+  const dotsMode = t.typingDotsMode ?? 'jump';
   const title = t.title || bot.name;
   const subtitle = t.subtitle || 'Отвечает по базе знаний, с источниками';
   const [input, setInput] = useState('');
@@ -652,6 +668,8 @@ export function Chat({
     const list = listRef.current;
     const count = openUnread;
     setOpenUnread(0);
+    // Курсор — в поле ввода: после перехода к непрочитанным можно сразу писать.
+    inputRef.current?.focus({ preventScroll: true });
     if (!list) return;
     if (count > 0) {
       const bubbles = list.querySelectorAll<HTMLElement>('[data-nudge-bubble]');
@@ -845,6 +863,7 @@ export function Chat({
                       jump={dotsJump}
                       speed={dotsSpeed}
                       label={dotsLabel}
+                      mode={dotsMode}
                     />
                   ) : (
                     text
@@ -920,6 +939,7 @@ export function Chat({
                 jump={dotsJump}
                 speed={dotsSpeed}
                 label={dotsLabel}
+                mode={dotsMode}
               />
             </div>
           </div>
